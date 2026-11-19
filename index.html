@@ -1,10 +1,10 @@
-<!-- 重构状态：完成 WU-23 -->
+<!-- 重构状态：完成 WU-28 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>范例地图 · 双窗口素材绘制工具</title>
+    <title>Start!MapOven-开炉！烤地图</title>
     <style>
         * {
             box-sizing: border-box;
@@ -274,6 +274,57 @@
             cursor: not-allowed;
             transform: none;
         }
+        /* 特殊互斥模式（创建自动元件 / 图块查询）下屏蔽除当前模式开关外的所有交互控件。
+           JS 会给真实表单控件加 disabled；这里的 CSS 同时兜底动态重建的按钮/标签/图层项。 */
+        body.special-mode-locked button:not(.ui-lock-keep),
+        body.special-mode-locked input:not(.ui-lock-keep),
+        body.special-mode-locked select:not(.ui-lock-keep),
+        body.special-mode-locked textarea:not(.ui-lock-keep) {
+            pointer-events: none !important;
+            opacity: 0.4 !important;
+            cursor: not-allowed !important;
+        }
+        body.special-mode-locked label:not(.ui-lock-keep),
+        body.special-mode-locked .layer-item,
+        body.special-mode-locked .dropdown-item {
+            pointer-events: none !important;
+            opacity: 0.4 !important;
+            cursor: not-allowed !important;
+        }
+        /* 例外：素材页签、地图页签在互斥模式下始终可切换（用户要为不同素材创建/切换查询） */
+        body.special-mode-locked .material-tab,
+        body.special-mode-locked .map-tab {
+            pointer-events: auto !important;
+            opacity: 1 !important;
+            cursor: pointer !important;
+        }
+        /* 例外：预览倍率调整（素材/地图两侧）与 RM 模式勾选框在互斥模式下仍可操作 */
+        body.special-mode-locked #tileZoomSlider,
+        body.special-mode-locked #tileZoomResetBtn,
+        body.special-mode-locked #tileZoom2xBtn,
+        body.special-mode-locked #tileZoom3xBtn,
+        body.special-mode-locked #tileFitBtn,
+        body.special-mode-locked #mapZoomSlider,
+        body.special-mode-locked #mapZoomResetBtn,
+        body.special-mode-locked #mapZoom2xBtn,
+        body.special-mode-locked #mapZoom3xBtn,
+        body.special-mode-locked #mapFitBtn,
+        body.special-mode-locked #rmModeToggle,
+        body.special-mode-locked #rmModeToggleWrap {
+            pointer-events: auto !important;
+            opacity: 1 !important;
+            cursor: pointer !important;
+        }
+        /* 例外：模态弹窗内的按钮/控件（如「创建失败」的确定键）在互斥模式下仍需可点击，
+           否则校验失败弹窗无法关闭。弹窗本身是全局 UI，不属于被屏蔽的功能按钮。 */
+        body.special-mode-locked .modal-overlay button:not(.ui-lock-keep),
+        body.special-mode-locked .modal-overlay input:not(.ui-lock-keep),
+        body.special-mode-locked .modal-overlay select:not(.ui-lock-keep),
+        body.special-mode-locked .modal-overlay textarea:not(.ui-lock-keep) {
+            pointer-events: auto !important;
+            opacity: 1 !important;
+            cursor: pointer !important;
+        }
         .window-btn svg {
             width: 14px;
             height: 14px;
@@ -285,7 +336,23 @@
             background-color: transparent;
             border: none;
         }
+        /* 修正「增加素材」文字偏下：把行高压到 1，并让文字成为独立 flex 项居中 */
+        .file-input-label.window-btn.success {
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+        .file-input-label .label-text {
+            display: inline-flex;
+            align-items: center;
+            line-height: 1;
+            height: 1em;
+            /* CJK 字形在行盒里偏上，叠加 svg 撑高后实测整体偏下 1px，这里回正 */
+            position: relative;
+            top: -1px;
+        }
         #fileInput { display: none; }
+        #bgImageInput { display: none; }
 
         .window-content {
             flex: 1;
@@ -378,10 +445,11 @@
             transform-origin: top left;
             /* 加入 will-change 强制浏览器将它独立为一个图层，防止重排时裁切 */
             will-change: transform, width, height;
-        }        /* 仅对地图应用 transform 缩放 */
+        }
+        /* 地图与素材面板统一采用「物理像素重建 + 1:1 DOM 尺寸」缩放，
+           不再用 CSS transform 拉伸位图，避免格子线和图块被插值放大变模糊 */
         #mapCanvas {
-            transform-origin: top left; /* 缩放基准点 */
-            transition: transform 0.1s ease-out;
+            transform: none;
         }        #tileCanvas {
             cursor: pointer;
         }
@@ -768,6 +836,121 @@
             background: #d9534f;
             border-color: #e27a78;
         }
+
+        /* ----- 图层面板第二行工具条：与素材面板第三行同一套排布 ----- */
+        .layer-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 8px 16px;
+            min-height: 47px;
+            box-sizing: border-box;
+            flex-wrap: wrap;
+            border-bottom: 1px solid #3f4147;
+        }
+        .layer-add-btn {
+            background: #10b981;
+            border-color: #34d399;
+            color: #ffffff;
+            /* 与「增加素材」保持完全相同的字号与居中方式 */
+            font-size: 0.8rem;
+            line-height: 1;
+            justify-content: center;
+            align-items: center;
+            padding: 6px 14px;
+            height: 32px;
+            box-sizing: border-box;
+            gap: 5px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        /* 和「增加素材」一致：文字成为独立 flex 项，消除 CJK 基线偏下 */
+        .layer-add-btn .label-text {
+            display: inline-flex;
+            align-items: center;
+            line-height: 1;
+            height: 1em;
+            /* 固定 32px 高度下，CJK 字形实测偏上 0.5~1px，下移 0.75px 让两者都落在中心 */
+            position: relative;
+            top: 0.75px;
+        }
+        .layer-add-btn:hover {
+            background: #059669;
+            border-color: #10b981;
+        }
+
+        /* ----- 图层类型竖条：普通图层蓝、背景图层绿，贴在条目左边缘 ----- */
+        .layer-item {
+            padding-left: 17px;
+        }
+        .layer-type-bar {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 7px;
+            border-radius: 10px 0 0 10px;
+            background: #3b6eff;
+            pointer-events: none;
+        }
+        .layer-item.is-background .layer-type-bar {
+            background: #10b981;
+        }
+        .layer-item.is-background.active {
+            background: #10b98122;
+            border-color: #34d399;
+        }
+        .layer-item .layer-mini-btn.bg-import-btn {
+            color: #34d399;
+            border-color: #34d39977;
+        }
+        .layer-item .layer-mini-btn.bg-import-btn:hover {
+            background: #10b98133;
+            color: #6ee7b7;
+        }
+
+        /* ----- 背景图层：自绘「禁止符号 + 背景图层」只出现在地图画布上 -----
+           图层面板的条目保持普通可点指针，不再弹出禁止符号与文字标签。
+           !important 用来压过历史代码写入的内联 cursor，避免系统十字星与徽标叠加。 */
+        #mapCanvas.bg-no-paint {
+            cursor: none !important;
+        }
+        .bg-cursor-badge {
+            position: fixed;
+            left: 0;
+            top: 0;
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            pointer-events: none;
+            padding: 3px 10px 3px 3px;
+            background: rgba(16, 18, 22, 0.94);
+            border: 1px solid #6d727c;
+            border-radius: 999px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+            color: #e1e5ea;
+            font-size: 0.8rem;
+            line-height: 1;
+            white-space: nowrap;
+            user-select: none;
+        }
+        .bg-cursor-badge.visible {
+            display: inline-flex;
+        }
+        .bg-cursor-badge .bg-forbid-icon {
+            width: 18px;
+            height: 18px;
+            flex: none;
+            stroke: #ff6b6b;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+        }
+        .bg-cursor-badge .bg-cursor-text {
+            line-height: 1;
+        }
         
         .layer-item.dragging {
             opacity: 0.4;
@@ -855,6 +1038,86 @@
             background: rgba(217, 83, 79, 0.25) !important;
             border-color: #d9534f !important;
             box-shadow: 0 0 10px rgba(217, 83, 79, 0.3) !important;
+        }
+
+        /* ----- 分层导出：勾选需要导出的图层 ----- */
+        #exportLayersModal { z-index: 1100; }
+        #exportLayersModal .modal { min-width: 380px; max-width: 480px; }
+        .export-layer-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 2px;
+        }
+        .export-layer-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 12px;
+            background: #202226;
+            border: 1px solid #3f4147;
+            border-radius: 10px;
+            color: #e1e5ea;
+            font-size: 0.88rem;
+            cursor: pointer;
+            user-select: none;
+            transition: 0.15s;
+        }
+        .export-layer-row:hover {
+            background: #2c2f35;
+            border-color: #6d8dff;
+        }
+        .export-layer-row input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            margin: 0;
+            flex: none;
+            accent-color: #3b6eff;
+            cursor: pointer;
+        }
+        .export-layer-row.is-background input[type="checkbox"] {
+            accent-color: #10b981;
+        }
+        .export-layer-row .export-layer-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .export-layer-row .export-layer-tag {
+            flex: none;
+            font-size: 0.7rem;
+            line-height: 1;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: #3b6eff22;
+            border: 1px solid #6d8dff77;
+            color: #9db4ff;
+        }
+        .export-layer-row.is-background .export-layer-tag {
+            background: #10b98122;
+            border-color: #34d39977;
+            color: #6ee7b7;
+        }
+        .export-layer-row .export-layer-hidden {
+            flex: none;
+            font-size: 0.7rem;
+            color: #8b909a;
+        }
+        .export-layer-hint {
+            font-size: 0.76rem;
+            color: #8b909a;
+            text-align: center;
+            margin-top: 12px;
+            line-height: 1.6;
+        }
+        .export-layer-empty {
+            font-size: 0.85rem;
+            color: #8b909a;
+            text-align: center;
+            padding: 16px 0;
         }
 
         .context-menu {
@@ -959,8 +1222,62 @@
             transition: 0.15s;
             white-space: nowrap;
         }
-.zoom-fit-btn:hover { background: #4f7dff; border-color: #8b9bc0; }
-.zoom-fit-btn:active { transform: scale(0.96); }
+        .zoom-fit-btn:hover { background: #4f7dff; border-color: #8b9bc0; }
+                .zoom-fit-btn:active {
+            transform: scale(0.96);
+        }
+        .window-btn.success.active-mode {
+            background: #10b981;
+            color: #ffffff;
+            border-color: #10b981;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+        }
+        /* ----- 创建自动元件下拉菜单 ----- */
+        .dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 4px;
+            background: #2b2d31;
+            border: 1px solid #3f4147;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+            padding: 4px;
+            display: none;
+            flex-direction: column;
+            gap: 2px;
+            z-index: 200;
+            min-width: 180px;
+        }
+        /* 下拉窗口：只由 JS 的 .active 类控制显隐，不绑定 hover，
+           鼠标从按钮移到菜单上不会消失；top:100% 保证向下弹出 */
+        .dropdown-wrapper {
+            z-index: 210;
+        }
+        .dropdown-menu.active {
+            display: flex;
+        }
+        .dropdown-item {
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            transition: 0.15s;
+        }
+        .dropdown-item:hover {
+            background: #3a3d44;
+        }
+        .dropdown-item strong {
+            color: #34d399;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .dropdown-item span {
+            color: #9aa0a9;
+            font-size: 0.7rem;
+        }
         .zoom-value {
             font-size: 0.7rem;
             color: #9aa0a9;
@@ -1084,14 +1401,33 @@
                 </div>
                 <!-- 第三行：独立标签栏 -->
                 <div class="material-tabs-bar" style="position: relative; justify-content: flex-end;">
-                    <button class="window-btn success" id="createAutoTileBtn" style="display: inline-flex; align-items: center; justify-content: center; padding: 6px 16px; font-size: 0.8rem; flex-shrink: 0; margin-bottom: 8px; white-space: nowrap; background: rgba(255,255,255,0.1); border-color: #34d399; color: #34d399; height: 32px;">
-                        创建自动元件
-                    </button>
+                    <!-- 带有下拉菜单的创建自动元件按钮 -->
+                    <div class="dropdown-wrapper" style="position: relative; display: inline-flex; margin-bottom: 8px;">
+                        <button class="window-btn success" id="createAutoTileBtn" style="display: inline-flex; align-items: center; justify-content: center; padding: 6px 16px; font-size: 0.8rem; flex-shrink: 0; white-space: nowrap; background: rgba(255,255,255,0.1); border-color: #34d399; color: #34d399; height: 32px;">
+                            <span id="createAutoTileText">创建自动元件</span> <span id="createAutoTileArrow" style="font-size: 0.6rem; margin-left: 4px;">▼</span>
+                        </button>
+                        <!-- 下拉菜单 -->
+                        <div class="dropdown-menu" id="autoTileDropdown">
+                            <div class="dropdown-item" data-mode="rm">
+                                <strong>RM模式</strong>
+                                <span>RM的2×3自动元件布局</span>
+                            </div>
+                            <div class="dropdown-item" data-mode="standard">
+                                <strong>通用模式</strong>
+                                <span>原创的5×10固定布局</span>
+                            </div>
+                            <div class="dropdown-item" data-mode="custom">
+                                <strong>自选模式（敬请期待）</strong>
+                                <span>挨个点选每一个零件</span>
+                            </div>
+                        </div>
+                    </div>
                     <label class="file-input-label window-btn success" for="fileInput" title="支持批量选择" style="display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 6px 16px; font-size: 0.8rem; flex-shrink: 0; margin-bottom: 8px; white-space: nowrap; height: 32px;">
                         <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;flex-shrink:0;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                        增加素材
+                        <span class="label-text">增加素材</span>
                     </label>
                     <input type="file" id="fileInput" accept="image/*" multiple style="display: none;">
+                    <input type="file" id="bgImageInput" accept="image/png" style="display: none;">
                     <!-- 悬浮缩放控制栏 -->
                     <div class="floating-zoom-bar" style="top: 66px; left: 16px;">
                         <input type="range" id="tileZoomSlider" class="zoom-slider" min="10" max="300" value="100">
@@ -1138,12 +1474,19 @@
 
         <!-- 图层面板 -->
         <div class="window layer-panel">
-            <div class="window-header">
-                <div class="window-title">
-                    <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-                    图层
+            <div class="window-header" style="flex-direction: column; align-items: stretch; padding: 0; gap: 0;">
+                <!-- 第一行：标题 -->
+                <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #3f4147; min-height: 55px; box-sizing: border-box;">
+                    <div class="window-title">
+                        <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                        图层
+                    </div>
                 </div>
-                <button class="window-btn primary" id="addLayerBtn" title="新建图层">＋ 新建图层</button>
+                <!-- 第二行：与素材面板工具条同款，新建图层 / 新建背景图层 -->
+                <div class="layer-toolbar">
+                    <button class="window-btn success layer-add-btn" id="addLayerBtn" title="新建图层"><span class="label-text">＋ 新建图层</span></button>
+                    <button class="window-btn success layer-add-btn" id="addBackgroundLayerBtn" title="新建背景图层"><span class="label-text">＋ 新建背景图层</span></button>
+                </div>
             </div>
             <div class="window-content layer-list" id="layerList"></div>
             <div class="window-status">
@@ -1434,6 +1777,28 @@
     </div>
 </div>
 
+<!-- 分层导出：选择需要导出的图层 -->
+<div class="modal-overlay" id="exportLayersModal">
+    <div class="modal">
+        <h3 style="justify-content: center;">请选择需要导出的图层</h3>
+        <div class="export-layer-list" id="exportLayerList"></div>
+        <div class="export-layer-hint" id="exportLayerHint">默认已勾选所有普通图层；背景图层需手动勾选</div>
+        <div class="modal-actions" style="margin-top: 16px;">
+            <button class="ghost" id="exportLayersCancelBtn">取消</button>
+            <button class="primary" id="exportLayersConfirmBtn">导出</button>
+        </div>
+    </div>
+</div>
+
+<!-- 背景图层悬停时跟随鼠标的禁止符号 + 文字标签 -->
+<div class="bg-cursor-badge" id="bgCursorBadge" aria-hidden="true">
+    <svg class="bg-forbid-icon" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"></circle>
+        <line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line>
+    </svg>
+    <span class="bg-cursor-text">背景图层</span>
+</div>
+
 <!-- 自定义右键菜单 -->
 <div class="context-menu" id="contextMenu">
     <div class="context-menu-item" id="deleteContextItem">删除</div>
@@ -1576,6 +1941,12 @@
         const exportBundleBtn = document.getElementById('exportBundleBtn');
         const exportCancelBtn = document.getElementById('exportCancelBtn');
         const exportMapModal = document.getElementById('exportMapModal');
+        // 分层导出的图层勾选窗口 + 背景图层悬停光标
+        const exportLayersModal = document.getElementById('exportLayersModal');
+        const exportLayerList = document.getElementById('exportLayerList');
+        const exportLayersCancelBtn = document.getElementById('exportLayersCancelBtn');
+        const exportLayersConfirmBtn = document.getElementById('exportLayersConfirmBtn');
+        const bgCursorBadge = document.getElementById('bgCursorBadge');
 
         const clearMaterialModal = document.getElementById('clearMaterialModal');
         const clearMaterialCancelBtn = document.getElementById('clearMaterialCancelBtn');
@@ -1634,19 +2005,23 @@
         window.addEventListener('resize', updateGlobalScale);
         const mapZoom3xBtn = document.getElementById('mapZoom3xBtn');
 
+        // 创建自动元件的下拉菜单与模式切换统一放在下方「退出/进入创建模式」区域，
+        // 这里不再重复绑定 click（两处 toggle 会互相抵消导致菜单永远打不开）。
         function setMapZoom(val) {
-            if (!mapCreated) return;
+            if (!mapCreated) {
+                // 地图还没建好时只记住缩放意图，不要去拉伸空白画布
+                mapZoomSlider.value = val;
+                mapZoom = val / 100;
+                mapZoomValue.textContent = `${val}%`;
+                return;
+            }
             mapZoomSlider.value = val;
             mapZoom = val / 100;
             mapZoomValue.textContent = `${val}%`;
-            
-            // 固定 DOM 尺寸为原始像素尺寸，纯粹靠 transform 缩放
-            mapCanvas.style.transformOrigin = 'top left';
-            mapCanvas.style.width = (mapCols * cellW) + 'px';
-            mapCanvas.style.height = (mapRows * cellH) + 'px';
-            mapCanvas.style.transform = `scale(${mapZoom})`;
-            
-            // 格子线宽度按 1/倍率 画，倍率一变必须重建网格层再重绘
+
+            // 与素材面板一致：重建画布物理像素 + 1:1 DOM 尺寸，
+            // 格子线按固定屏幕像素重画，倍率只放大格子本身。
+            syncMapCanvasResolution();
             rebuildGridOverlay();
             drawMapPanel();
         }
@@ -1766,6 +2141,24 @@
         let currentLayerIndex = 0;
         let layerIdCounter = 1;
 
+        // ----- 背景图层（WU-25）-----
+        // type:'background' 的图层只贴一张 PNG，不参与图块绘制；普通图层 type 缺省或 'normal'
+        let pendingBgLayer = null;
+        function isBackgroundLayer(layer) {
+            return Boolean(layer && layer.type === 'background');
+        }
+        function drawLayerBackground(ctx, layer) {
+            if (!ctx || !layer || !layer.bgImage) return;
+            const img = layer.bgImage;
+            if (!img.complete || !img.naturalWidth) return;
+            // 永远按图片原始像素从 (0,0) 画：尺寸和地图不同也只左上角吸附、不拉伸，
+            // 超出地图的部分由画布边界自然裁掉。
+            ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+        }
+        function hasVisibleBackground() {
+            return layers.some(l => l.visible && isBackgroundLayer(l) && l.bgImage);
+        }
+
         let mapGrid = [];
         let mapCols = 0;
         let mapRows = 0;
@@ -1790,9 +2183,40 @@
         let autoTiles = [];
         let autoTileIdCounter = 1;
         let isCreatingAutoTile = false;
+        let currentAutoTileMode = 'rm'; // 'rm' | 'standard' | 'custom'
         let currentAutoTileId = null;
-        const autoTileRenderCache = {}; // 用于缓存计算后的 47 种图块
+        const autoTileRenderCache = {}; // 用于缓存计算后的变体图块
         let hoverAutoTileCell = null; // 记录鼠标在素材面板悬停的坐标
+
+        // ----- 自动元件模式 -----
+        // RM 模式：2 列 × 3 行，按 4 象限拼出 47 种变体（原有规则，保持不变）
+        // 通用模式：5 列 × 10 行 = 50 格，编号 0~49（行优先，index = row * 5 + col）；
+        //           前 8 行 0~39 是原有图块与规则；第 9/10 行 40~49 用于补齐原先留空的 7 种邻域；
+        //           47/48/49 是素材里的空格，不参与绘制（见 STANDARD_DRAWABLE_COUNT）；
+        //           按周围 8 格同组图块的占用情况直接查表取整格图块，不和 RM 共用排列规则；
+        //           显示/点选/绘制/存档方式则完全沿用 RM 那一套。
+        const AUTO_TILE_COLS = 2;
+        const AUTO_TILE_ROWS = 3;
+        const STANDARD_COLS = 5;
+        const STANDARD_ROWS = 10;
+        const STANDARD_TILE_COUNT = STANDARD_COLS * STANDARD_ROWS;   // 50 格，编号 0~49
+        const STANDARD_DRAWABLE_COUNT = 47; // 47 / 48 / 49 为素材空格：>= 47 的编号一律不绘制
+        // 通用模式缩略图：取素材左上角 3×3 拼成 3×3 预览，仍画在框选范围正中央；
+        // RM 模式与老存档仍是 1×1（旧存档按预览图自身尺寸自动识别，不会被拉伸）
+        const STANDARD_PREVIEW_COLS = 3;
+        const STANDARD_PREVIEW_ROWS = 3;
+        const STANDARD_FALLBACK_INDEX = -1; // 负数 = 留空不描画：没有任何规则命中时画全透明格
+
+        // 每个自动元件按自己的模式拿尺寸；旧存档没有 mode 字段，一律按 RM 处理
+        function getAutoTileSize(at) {
+            return at && at.mode === 'standard'
+                ? { cols: STANDARD_COLS, rows: STANDARD_ROWS }
+                : { cols: AUTO_TILE_COLS, rows: AUTO_TILE_ROWS };
+        }
+        // 创建中的框按当前下拉选中的模式拿尺寸
+        function getCreationSize() {
+            return getAutoTileSize({ mode: currentAutoTileMode });
+        }
 
         function drawHoverPreview(cell, overrideW, overrideH) {
             if (!mapCreated || !cell) return;
@@ -1899,16 +2323,32 @@
                         continue;
                     }
                     if (!currentMat) continue;
-                    const v = toViewCell(at.startCol, at.startRow, currentMat);
-                    const existing = tiles.find(t => t.isAuto && t.autoId === at.id);
-                    if (existing) {
-                        if (!existing.layerNames.includes(layerName)) existing.layerNames.push(layerName);
+                    if (at.mode === 'standard') {
+                        // 通用模式：按当前地图格实际使用的素材编号逐格反查（像普通图块 1×1），
+                        // 而不是整块 5×10 一起亮起。编号由当前邻域实时算出，与绘制结果一致。
+                        const idx = getStandardVariantIndex(mapCell.col, mapCell.row, layers[li].grid, tile.autoId);
+                        if (idx < 0 || idx >= STANDARD_DRAWABLE_COUNT) continue; // 透明留空格不反查
+                        const v = standardVariantToViewCell(at, idx, currentMat);
+                        const existing = tiles.find(t => !t.isAuto && t.col === v.col && t.row === v.row);
+                        if (existing) {
+                            if (!existing.layerNames.includes(layerName)) existing.layerNames.push(layerName);
+                        } else {
+                            tiles.push({ col: v.col, row: v.row, wCols: 1, hRows: 1, layerNames: [layerName], isAuto: false });
+                        }
                     } else {
-                        tiles.push({
-                            col: v.col, row: v.row,
-                            wCols: AUTO_TILE_COLS, hRows: AUTO_TILE_ROWS,
-                            layerNames: [layerName], isAuto: true, autoId: at.id
-                        });
+                        // RM 模式保持不变：整块 2×3 高亮
+                        const v = toViewCell(at.startCol, at.startRow, currentMat);
+                        const existing = tiles.find(t => t.isAuto && t.autoId === at.id);
+                        if (existing) {
+                            if (!existing.layerNames.includes(layerName)) existing.layerNames.push(layerName);
+                        } else {
+                            const atSize = getAutoTileSize(at);
+                            tiles.push({
+                                col: v.col, row: v.row,
+                                wCols: atSize.cols, hRows: atSize.rows,
+                                layerNames: [layerName], isAuto: true, autoId: at.id
+                            });
+                        }
                     }
                 } else {
                     if (tile.materialId && tile.materialId !== currentMatId) {
@@ -1932,12 +2372,77 @@
             return { tiles: tiles, crossRef: crossRef };
         }
 
+        // ===== 模式互斥的全局按钮屏蔽 =====
+        // 「创建自动元件」与「图块查询」是两个独立模式，进入后除各自的开关按钮外，
+        // 页面上所有按钮/控件都必须禁用，直到再次点击该开关退出模式。
+        // 记录每个控件进入模式前的 disabled 原值，退出时精确还原（不误放开原本就禁用的按钮）。
+        // 注意：素材页签(.material-tab) 与地图页签(.map-tab) 不在锁定列表里——
+        // 用户需要在不同素材/地图间切换来分别创建自动元件或切换查询，始终可点（CSS 侧也已豁免）。
+        const UI_LOCK_SELECTOR = [
+            'button',
+            'input:not([type="file"])',
+            'select',
+            'textarea',
+            '.layer-item',
+            '.dropdown-item'
+        ].join(',');
+        let uiLockSaved = [];   // [{el, disabled}] 进入模式前的状态快照
+        let uiLockActive = false;
+
+        // 模式下仍需可用的控件：素材/地图两侧的预览倍率调整 + RM 模式勾选框。
+        // 它们不随模式被禁用（CSS 侧也已按 id 豁免 pointer-events / opacity）。
+        const UI_LOCK_ALWAYS_ALLOW = new Set([
+            'tileZoomSlider', 'tileZoomResetBtn', 'tileZoom2xBtn', 'tileZoom3xBtn', 'tileFitBtn',
+            'mapZoomSlider', 'mapZoomResetBtn', 'mapZoom2xBtn', 'mapZoom3xBtn', 'mapFitBtn',
+            'rmModeToggle', 'rmModeToggleWrap',
+            // 缩放数值文本本身不是控件，列出仅为防止将来误改时误伤
+            'tileZoomValue', 'mapZoomValue'
+        ]);
+
+        // keepBtnId：当前模式的开关按钮，保持可点（用于退出）。传 null 表示没有豁免。
+        function lockUiForMode(keepBtnId) {
+            if (uiLockActive) unlockUi(); // 理论上不会发生，兜底：先还原再重锁
+            uiLockSaved = [];
+            document.querySelectorAll(UI_LOCK_SELECTOR).forEach(el => {
+                if (el.id && UI_LOCK_ALWAYS_ALLOW.has(el.id)) return; // 倍率/RM 控件始终可用
+                if (keepBtnId && el.id === keepBtnId) return; // 开关按钮本身不锁
+                // 开关按钮的子节点（如图标 svg）也不应被锁，否则点不动开关
+                if (keepBtnId && el.closest && el.closest('#' + keepBtnId)) return;
+                // 豁免控件的子节点（如倍率按钮内的 svg、RM label 内的 checkbox）也保持可用
+                if (el.closest && el.closest('#rmModeToggleWrap')) return;
+                // 模态弹窗内的按钮（如「创建失败」确定键）不锁：模式锁定时唯一能弹出的
+                // 就是校验提示，其确定/取消必须始终可点，否则弹窗关不掉。CSS 侧也已豁免。
+                if (el.closest && el.closest('.modal-overlay')) return;
+                uiLockSaved.push({ el: el, disabled: 'disabled' in el ? el.disabled : null });
+                if ('disabled' in el) el.disabled = true;
+            });
+            document.body.classList.add('special-mode-locked');
+            if (keepBtnId) {
+                const keep = document.getElementById(keepBtnId);
+                if (keep) keep.classList.add('ui-lock-keep');
+            }
+            uiLockActive = true;
+        }
+
+        function unlockUi() {
+            if (!uiLockActive) return;
+            uiLockSaved.forEach(item => {
+                if (item.disabled !== null) item.el.disabled = item.disabled;
+            });
+            uiLockSaved = [];
+            document.body.classList.remove('special-mode-locked');
+            document.querySelectorAll('.ui-lock-keep').forEach(el => el.classList.remove('ui-lock-keep'));
+            uiLockActive = false;
+        }
+
         function togglePickerMode(forceState) {
             const nextState = forceState !== undefined ? forceState : (currentMode !== 'picker');
             const toolBtns = ['pencilBtn', 'fillRectBtn', 'eraserBtn'];
             const pickerBtn = document.getElementById('pickerBtn');
 
             if (nextState) {
+                // 与创建自动元件互斥：若创建模式仍激活，先干净退出并解除全局锁定
+                if (isCreatingAutoTile) exitAutoTileCreation();
                 currentMode = 'picker';
                 currentTool = 'brush';
                 isPainting = false;
@@ -1961,7 +2466,10 @@
                 document.getElementById('pencilBtn').classList.add('primary');
                 document.getElementById('currentToolDisplay').textContent = '图块查询';
 
-                mapCanvas.style.cursor = 'crosshair';
+                // 屏蔽除「图块查询」开关外的所有按钮，保持模式独立
+                lockUiForMode('pickerBtn');
+
+                syncMapBlockedCursor();
                 refreshTilePanelHighlight();
                 if (mapCreated) drawMapPanel();
                 statusMessage.textContent = '图块查询：点击地图上的一格，查看用到的素材';
@@ -1977,26 +2485,47 @@
                 
                 pickerBtn.classList.remove('primary');
                 
+                // 恢复进入模式前所有按钮的原始可用状态
+                unlockUi();
                 toolBtns.forEach(id => { const b = document.getElementById(id); if (b) b.disabled = false; });
-                mapCanvas.style.cursor = 'crosshair';
                 setTool('brush');
+                syncMapBlockedCursor();
                 clearSelectedTile();
                 if (mapCreated) drawMapPanel();
                 statusMessage.textContent = '已退出图块查询模式';
             }
         }
 
+        // 统一同步地图画布分辨率：物理像素 = 原始像素 × 倍率，DOM 尺寸 1:1。
+        // 不再用 CSS transform 放大位图，格子线与图块都不会被浏览器插值变模糊。
+        function syncMapCanvasResolution() {
+            if (!mapCreated || mapCols <= 0 || mapRows <= 0) return false;
+            const targetW = Math.max(1, Math.round(mapCols * cellW * mapZoom));
+            const targetH = Math.max(1, Math.round(mapRows * cellH * mapZoom));
+            let changed = false;
+            if (mapCanvas.width !== targetW || mapCanvas.height !== targetH) {
+                mapCanvas.width = targetW;
+                mapCanvas.height = targetH;
+                changed = true;
+            }
+            const cssW = targetW + 'px';
+            const cssH = targetH + 'px';
+            if (mapCanvas.style.width !== cssW) mapCanvas.style.width = cssW;
+            if (mapCanvas.style.height !== cssH) mapCanvas.style.height = cssH;
+            if (mapCanvas.style.transform !== 'none') mapCanvas.style.transform = 'none';
+            // 改 width/height 会重置上下文状态，必须恢复缩放变换与像素化采样
+            mapCtx.setTransform(mapZoom, 0, 0, mapZoom, 0, 0);
+            mapCtx.imageSmoothingEnabled = false;
+            if (changed) gridOverlayCanvas = null;
+            return changed;
+        }
+
         // 专门用来强制刷新地图画布缩放状态的函数
         function applyMapZoom() {
             if (!mapCreated) return;
-            
-            // 设置基准点
-            mapCanvas.style.transformOrigin = 'top left';
-            
-            // 核心修复：DOM 宽高永远保持原始像素，用 transform 进行缩放
-            mapCanvas.style.width = (mapCols * cellW) + 'px';
-            mapCanvas.style.height = (mapRows * cellH) + 'px';
-            mapCanvas.style.transform = `scale(${mapZoom})`;
+            syncMapCanvasResolution();
+            rebuildGridOverlay();
+            drawMapPanel();
         }
 
         function rebuildGridOverlay() {
@@ -2004,32 +2533,27 @@
                 gridOverlayCanvas = null;
                 return;
             }
-            // 恢复原始尺寸的网格图层
+            // 网格层直接按「放大后的物理像素」建，用 fillRect 画固定
+            // GRID_LINE_WIDTH 个屏幕像素的实线，和素材面板完全一致，
+            // 不存在亚像素描边被放大后发虚的问题。
+            const physW = Math.max(1, Math.round(mapCols * cellW * mapZoom));
+            const physH = Math.max(1, Math.round(mapRows * cellH * mapZoom));
             gridOverlayCanvas = document.createElement('canvas');
-            gridOverlayCanvas.width = mapCanvas.width;
-            gridOverlayCanvas.height = mapCanvas.height;
+            gridOverlayCanvas.width = physW;
+            gridOverlayCanvas.height = physH;
             const gctx = gridOverlayCanvas.getContext('2d');
-            
-            gctx.strokeStyle = gridColor;
-            // 地图画布靠 CSS transform 放大，画布里画 1/倍率 像素宽，
-            // 放大回屏幕才正好是 GRID_LINE_WIDTH 像素，格子线不会跟着变粗。
-            const gridLineWidth = GRID_LINE_WIDTH / mapZoom;
-            gctx.lineWidth = gridLineWidth;
+
+            gctx.fillStyle = gridColor;
             gctx.globalAlpha = GRID_ALPHA;
-            gctx.beginPath();
-            
-            const offset = gridLineWidth / 2;
+            const lw = GRID_LINE_WIDTH;
             for (let c = 0; c <= mapCols; c++) {
-                const x = c * cellW + offset;
-                gctx.moveTo(x, 0);
-                gctx.lineTo(x, mapCanvas.height);
+                const x = Math.round(c * cellW * mapZoom);
+                gctx.fillRect(x, 0, lw, physH);
             }
             for (let r = 0; r <= mapRows; r++) {
-                const y = r * cellH + offset;
-                gctx.moveTo(0, y);
-                gctx.lineTo(mapCanvas.width, y);
+                const y = Math.round(r * cellH * mapZoom);
+                gctx.fillRect(0, y, physW, lw);
             }
-            gctx.stroke();
         }
 
         function updateCellSizeDisplay() {
@@ -2138,17 +2662,36 @@
                     
                     const ax = v.col * cellW * tileZoom;
                     const ay = v.row * cellH * tileZoom;
-                    const aw = cellW * 2 * tileZoom;
-                    const ah = cellH * 3 * tileZoom;
+                    const atSize = getAutoTileSize(at);
+                    const aw = cellW * atSize.cols * tileZoom;
+                    const ah = cellH * atSize.rows * tileZoom;
+
+                    // 图块查询模式下的「通用模式」自动元件：只保留覆盖整块的大外框，
+                    // 隐藏中央缩略图与遮罩，让底下每一格原始素材清晰可见，
+                    // 从而能像普通图块一样被逐格点击、逐格反查。
+                    // RM 模式自动元件不受影响，任何情况下都照常显示遮罩 + 缩略图。
+                    if (currentMode === 'picker' && at.mode === 'standard') {
+                        tileCtx.save();
+                        tileCtx.strokeStyle = '#34d399';
+                        tileCtx.lineWidth = 2;
+                        tileCtx.setLineDash([]);
+                        tileCtx.strokeRect(ax + 1, ay + 1, aw - 2, ah - 2);
+                        tileCtx.restore();
+                        return;
+                    }
 
                     // 1. 绘制半透明遮罩（虚化效果）
                     tileCtx.save();
                     tileCtx.fillStyle = 'rgba(0, 0, 0, 0.5)'; 
                     tileCtx.fillRect(ax, ay, aw, ah);
                     
-                    // 3. 绘制预览图标（居中）
-                    const iconW = cellW * tileZoom;
-                    const iconH = cellH * tileZoom;
+                    // 3. 绘制预览图标（仍居中）：尺寸按预览图自身的格数
+                    //    通用模式是左上角 3×3 拼图，RM 模式 / 老存档是 1×1
+                    const pv = at.previewCanvas;
+                    const pvCols = pv && pv.width > 0 ? Math.max(1, Math.round(pv.width / cellW)) : 1;
+                    const pvRows = pv && pv.height > 0 ? Math.max(1, Math.round(pv.height / cellH)) : 1;
+                    const iconW = cellW * pvCols * tileZoom;
+                    const iconH = cellH * pvRows * tileZoom;
                     const iconX = ax + (aw - iconW) / 2;
                     const iconY = ay + (ah - iconH) / 2;
                     
@@ -2202,8 +2745,9 @@
                     tileCtx.save();
                     const x = v.col * cellW * tileZoom;
                     const y = v.row * cellH * tileZoom;
-                    const w = cellW * 2 * tileZoom;
-                    const h = cellH * 3 * tileZoom;
+                    const aSize = getAutoTileSize(aTile);
+                    const w = cellW * aSize.cols * tileZoom;
+                    const h = cellH * aSize.rows * tileZoom;
 
                     const outerOffset = 1.5;
                     const innerOffset = 0.5;
@@ -2354,11 +2898,20 @@
             mapPlaceholder.style.display = 'none';
             mapCanvasWrapper.style.display = 'flex';
 
-            mapCtx.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
+            // 倍率变化时重建物理像素，并统一给上下文套一个 mapZoom 变换：
+            // 内部所有绘制仍按原始逻辑坐标书写，放大由画布物理像素承担。
+            syncMapCanvasResolution();
+            mapCtx.setTransform(mapZoom, 0, 0, mapZoom, 0, 0);
+            mapCtx.imageSmoothingEnabled = false;
+            mapCtx.clearRect(0, 0, mapCols * cellW, mapRows * cellH);
 
             for (let li = 0; li < layers.length; li++) {
                 if (!layers[li].visible) continue;
-                
+                // 背景图层：按层序贴一张原尺寸 PNG，且不参与下面的图块合成
+                if (isBackgroundLayer(layers[li])) {
+                    drawLayerBackground(mapCtx, layers[li]);
+                    continue;
+                }
                 const grid = layers[li].grid;
                 for (let r = 0; r < mapRows; r++) {
                     for (let c = 0; c < mapCols; c++) {
@@ -2375,23 +2928,28 @@
             if (showGrid) {
                 if (!gridOverlayCanvas) rebuildGridOverlay();
                 if (gridOverlayCanvas) {
+                    // 网格层是已经按倍率画好的物理像素图层，用 1:1 变换贴上去，
+                    // 不能再被 mapZoom 变换二次放大。
+                    mapCtx.save();
+                    mapCtx.setTransform(1, 0, 0, 1, 0, 0);
                     mapCtx.drawImage(gridOverlayCanvas, 0, 0);
+                    mapCtx.restore();
                 }
             }
 
             mapCtx.save();
             mapCtx.strokeStyle = '#5b5f6b';
-            // 外边框同样反向抵消 CSS 放大，避免倍率一高就变粗
+            // 反向抵消画布倍率变换，外边框始终固定屏幕像素粗
             mapCtx.lineWidth = 2 / mapZoom;
             mapCtx.globalAlpha = 1.0;
-            mapCtx.strokeRect(0, 0, mapCanvas.width, mapCanvas.height);
+            mapCtx.strokeRect(0, 0, mapCols * cellW, mapRows * cellH);
             mapCtx.restore();
 
             // 核心修复：如果当前选中了自动元件（currentAutoTileId 有值），说明此时进入了反查范围模式，
             // 需要屏蔽并清除之前在地图上点击查询留下的单格选框（pickerMapCell）。
             if (currentMode === 'picker' && pickerMapCell && !currentAutoTileId) {
                 drawPickerRect();
-            } else if (currentTool !== 'fillRect' && hoverMapCell) {
+            } else if (currentTool !== 'fillRect' && hoverMapCell && !isBackgroundLayer(layers[currentLayerIndex])) {
                 // 橡皮擦模式下，即使没选素材也要显示虚线框
                 if (currentTool === 'erase' || selectedTiles.length > 0) {
                     drawHoverPreview(hoverMapCell);
@@ -2508,6 +3066,12 @@
         }
 
         function paintTileAt(col, row) {
+            // 背景图层是整层贴图的，单格增量重绘会先 clearRect 擦掉那一格的背景像素，
+            // 因此只要画面里有可见背景图层就改成整图重绘，保证背景始终在正确的层级。
+            if (hasVisibleBackground()) {
+                drawMapPanel();
+                return;
+            }
             const x = col * cellW;
             const y = row * cellH;
             mapCtx.clearRect(x, y, cellW, cellH);
@@ -2523,9 +3087,17 @@
 
         function drawCellGridLines(col, row) {
             if (!showGrid || !gridOverlayCanvas) return;
-            const x = col * cellW;
-            const y = row * cellH;
-            mapCtx.drawImage(gridOverlayCanvas, x, y, cellW, cellH, x, y, cellW, cellH);
+            // 网格层是物理像素图层：局部补线也按放大后的坐标，且用 1:1 变换绘制
+            const x = Math.round(col * cellW * mapZoom);
+            const y = Math.round(row * cellH * mapZoom);
+            const x2 = Math.round((col + 1) * cellW * mapZoom);
+            const y2 = Math.round((row + 1) * cellH * mapZoom);
+            const w = Math.max(1, x2 - x);
+            const h = Math.max(1, y2 - y);
+            mapCtx.save();
+            mapCtx.setTransform(1, 0, 0, 1, 0, 0);
+            mapCtx.drawImage(gridOverlayCanvas, x, y, w, h, x, y, w, h);
+            mapCtx.restore();
         }
 
         function eraseTileAt(col, row) {
@@ -2650,16 +3222,28 @@
                         const targetMatId = canvasData.materialId;
                         const targetCol = canvasData.col;
                         const targetRow = canvasData.row;
-                        
+                        const currentMat = getCurrentMaterial();
+
+                        // 点选的素材格若落在通用模式自动元件覆盖区内，记下它对应的编号，
+                        // 下面对地图里的通用元件格按「当前实际用的编号」逐格匹配。
+                        const stdTargets = findStandardVariantTargets(targetCol, targetRow, currentMat);
+
                         // 仅在当前激活的地图中寻找匹配项
                         layers.forEach(layer => {
                             if (!layer.visible) return;
                             for (let r = 0; r < mapRows; r++) {
                                 for (let c = 0; c < mapCols; c++) {
                                     const tile = layer.grid[r]?.[c];
-                                    if (tile && tile.materialId === targetMatId && tile.col === targetCol && tile.row === targetRow) {
-                                        reverseSearchTiles.push({ col: c, row: r });
+                                    if (!tile) continue;
+                                    let hit = tile.materialId === targetMatId && tile.col === targetCol && tile.row === targetRow;
+                                    if (!hit && tile.isAuto && stdTargets.length > 0) {
+                                        // 通用模式自动元件：按当前邻域实时算出的编号匹配，
+                                        // 且必须是同一个元件组、同一素材，避免不同元件撞号误亮。
+                                        hit = stdTargets.some(st =>
+                                            st.autoId === tile.autoId &&
+                                            st.idx === getStandardVariantIndex(c, r, layer.grid, tile.autoId));
                                     }
+                                    if (hit) reverseSearchTiles.push({ col: c, row: r });
                                 }
                             }
                         });
@@ -2781,9 +3365,16 @@
             for (let idx = layers.length - 1; idx >= 0; idx--) {
                 const layer = layers[idx];
                 const item = document.createElement('div');
-                item.className = 'layer-item' + (idx === currentLayerIndex ? ' active' : '') + (layer.visible ? '' : ' hidden-layer');
+                const bgLayer = isBackgroundLayer(layer);
+                item.className = 'layer-item' + (idx === currentLayerIndex ? ' active' : '') + (layer.visible ? '' : ' hidden-layer') + (bgLayer ? ' is-background' : '');
                 item.dataset.index = String(idx);
                 item.draggable = true;
+
+                // 左侧竖条：普通图层蓝、背景图层绿
+                const typeBar = document.createElement('span');
+                typeBar.className = 'layer-type-bar';
+                typeBar.title = bgLayer ? '背景图层：不可用图块绘制' : '普通图层：可用图块绘制';
+                item.appendChild(typeBar);
 
                 item.addEventListener('dragstart', (e) => {
                     e.dataTransfer.setData('text/plain', String(layer.id));
@@ -2878,6 +3469,26 @@
                 });
                 actions.appendChild(eyeBtn);
 
+                // 背景图层专用：小眼睛和删除之间的「导入背景 PNG」按钮
+                if (bgLayer) {
+                    const bgBtn = document.createElement('button');
+                    bgBtn.className = 'layer-mini-btn bg-import-btn';
+                    bgBtn.title = '为这个背景图层导入一张 PNG';
+                    bgBtn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+                    bgBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        pendingBgLayer = layer;
+                        const input = document.getElementById('bgImageInput');
+                        if (input) {
+                            input.value = '';
+                            input.click();
+                        }
+                    });
+                    // 只有只读分发包才隐藏（工程存档要能继续换背景图）
+                    if (rmModeToggleWrap.dataset.rmToggleHidden === 'true') bgBtn.style.display = 'none';
+                    actions.appendChild(bgBtn);
+                }
+
                 const delBtn = document.createElement('button');
                 delBtn.className = 'layer-mini-btn danger';
                 delBtn.textContent = '删';
@@ -2941,12 +3552,40 @@
             }
             const name = '图层 ' + layerIdCounter;
             layerIdCounter++;
-            layers.push({ id: layerIdCounter, name, visible: true, grid: createEmptyGrid() });
+            layers.push({ id: layerIdCounter, name, visible: true, type: 'normal', grid: createEmptyGrid() });
             currentLayerIndex = layers.length - 1;
             mapGrid = layers[currentLayerIndex].grid;
             renderLayerList();
             drawMapPanel();
             statusMessage.textContent = `已新建 ${name}`;
+        }
+
+        function addBackgroundLayer() {
+            if (!mapCreated) {
+                statusMessage.textContent = '请先创建地图再新建背景图层';
+                return;
+            }
+            const name = '背景图层 ' + layerIdCounter;
+            layerIdCounter++;
+            // 背景图层放最底层：这样导入 PNG 后不会把已有的图块盖住，
+            // 用户仍可以拖动图层条改变叠放顺序。
+            layers.unshift({
+                id: layerIdCounter,
+                name,
+                visible: true,
+                type: 'background',
+                bgDataUrl: null,
+                bgImage: null,
+                bgWidth: 0,
+                bgHeight: 0,
+                // 保留空网格，让所有遍历 grid 的既有逻辑无需特判
+                grid: createEmptyGrid()
+            });
+            currentLayerIndex = 0;
+            mapGrid = layers[currentLayerIndex].grid;
+            renderLayerList();
+            drawMapPanel();
+            statusMessage.textContent = `已新建 ${name}（最底层）：点击图层上的图片按钮导入 PNG，背景图层不能用图块绘制`;
         }
 
         function switchLayer(idx) {
@@ -2955,7 +3594,10 @@
             mapGrid = layers[currentLayerIndex].grid;
             renderLayerList();
             drawMapPanel();
-            statusMessage.textContent = `已切换到 ${layers[idx].name}`;
+            syncMapBlockedCursor();
+            statusMessage.textContent = isBackgroundLayer(layers[idx])
+                ? `已切换到 ${layers[idx].name}：背景图层不能用图块绘制，请点击图片按钮导入 PNG`
+                : `已切换到 ${layers[idx].name}`;
         }
 
         function removeLayer(idx) {
@@ -3093,7 +3735,7 @@
             mapCanvas.style.margin = '20px'; // 确保边距正常
 
             // 4. 初始化图层数据
-            layers = [{ id: layerIdCounter, name: '图层 1', visible: true, grid: createEmptyGrid() }];
+            layers = [{ id: layerIdCounter, name: '图层 1', visible: true, type: 'normal', grid: createEmptyGrid() }];
             layerIdCounter = 2;
             currentLayerIndex = 0;
             mapGrid = layers[0].grid;
@@ -3225,14 +3867,15 @@
                 : { col: col + halfCols, row: row - topRows };
         }
 
-        // 2×3 区域必须能完整落回原图的某一半，否则折半后会被拆成两块、无法共用一个框。
-        // 奇数列素材本来就不能开启 RM，不存在换算需求，只需检查边界。
-        function isMappableRegion(origCol, origRow, mat) {
+        // 区域必须能完整落回原图的某一半，否则折半后会被拆成两块、无法共用一个框。
+        // 尺寸由自动元件自己的模式决定（RM 2×3 / 通用 5×10）。
+        function isMappableRegion(origCol, origRow, mat, size = null) {
+            const { cols, rows } = size || { cols: AUTO_TILE_COLS, rows: AUTO_TILE_ROWS };
             const { origCols, origRows, halfCols } = foldGeometry(mat);
             if (origCol < 0 || origRow < 0) return false;
-            if (origCol + AUTO_TILE_COLS > origCols || origRow + AUTO_TILE_ROWS > origRows) return false;
+            if (origCol + cols > origCols || origRow + rows > origRows) return false;
             if (origCols % 2 !== 0) return true;
-            return origCol + AUTO_TILE_COLS <= halfCols || origCol >= halfCols;
+            return origCol + cols <= halfCols || origCol >= halfCols;
         }
 
         // 两张图都常驻：显示时用 processedImage，读档/抠像素按空间取对应的一张
@@ -3253,8 +3896,9 @@
             }
             const mat = getCurrentMaterial();
             if (!mat || !sourceImage || !imageLoaded) {
-                rmModeToggleWrap.style.display = 'none';
-                rmModeToggle.checked = false;
+                // 没有素材时也固定在右上角显示：此时勾选框代表「导入素材时是否以 RM 模式导入」的意图，
+                // 保留用户勾选状态，不强制清空。分发包（rmToggleHidden）仍由上面的分支隐藏。
+                rmModeToggleWrap.style.display = 'inline-flex';
                 return;
             }
             rmModeToggleWrap.style.display = 'inline-flex';
@@ -3290,8 +3934,12 @@
 
         rmModeToggle.addEventListener('change', () => {
             const mat = getCurrentMaterial();
-            if (!mat) {
-                rmModeToggle.checked = false;
+            if (!mat || !sourceImage || !imageLoaded) {
+                // 没有素材时勾选框是「导入意图」开关：保留勾选状态即可，
+                // 真正生效发生在导入素材时（见 fileInput change 里的 rmOnImport）。
+                statusMessage.textContent = rmModeToggle.checked
+                    ? '已勾选 RM 模式：接下来导入的素材都会以 RM 模式导入'
+                    : '已取消 RM 模式：接下来导入的素材按普通模式导入';
                 return;
             }
             const enabling = rmModeToggle.checked;
@@ -3304,7 +3952,7 @@
             // 开启前检查已有自动元件能否换算到折半画面；不能的话这套"共用坐标"就不成立
             if (enabling) {
                 const conflict = autoTiles.find(at =>
-                    at.materialId === mat.id && !isMappableRegion(at.startCol, at.startRow, mat));
+                    at.materialId === mat.id && !isMappableRegion(at.startCol, at.startRow, mat, getAutoTileSize(at)));
                 if (conflict) {
                     rmModeToggle.checked = false;
                     showAlert('这张素材上有跨左右半分界的自动元件，无法开启 RM 模式。请先删除它或改在半边内重新框选。', '无法开启 RM 模式');
@@ -3370,9 +4018,10 @@
                     sourceImage = mat.processedImage || mat.originalImage;
                     imageLoaded = true;
 
-                    // 每张素材的 RM 状态、自动元件选中/创建状态互相独立，切页必须刷新
+                    // 每张素材的 RM 状态、自动元件选中状态互相独立，切页必须清空选中。
+                    // 但「创建自动元件」模式要保留：用户常要为多张素材分别创建各自的自动元件，
+                    // 切素材页不应打断流程。锁定目标都是静态按钮/输入框，切页不重建，故无需重锁。
                     currentAutoTileId = null;
-                    if (isCreatingAutoTile) exitAutoTileCreation();
                     refreshRmToggle();
 
                     // 核心新增：恢复该素材独立的缩放倍率（如果是首次加载没有该属性，则默认为 1.0）
@@ -3415,6 +4064,10 @@
 
             let loadedCount = 0;
             let totalCount = files.length;
+            // 导入意图快照：本次导入开始时锁定 RM 勾选框状态，
+            // 勾选状态下导入的素材一律以 RM 模式启用（异步 onload 里用的是这份快照，
+            // 不会被第一张素材导入后刷新的勾选框状态带偏）。
+            const rmOnImport = rmModeToggle.checked;
 
             files.forEach((file) => {
                 if (!file.type.startsWith('image/')) {
@@ -3480,13 +4133,13 @@
                             targetMaterialIndex = existingIndex;
                             statusMessage.textContent = `素材「${file.name}」已覆盖更新`;
                         } else {
-                            // 没有同名，正常新增；新素材默认不启用 RM
+                            // 没有同名，正常新增；RM 状态取导入时锁定的勾选意图
                             const newMat = { 
                                 id: 'mat_' + (materialIdCounter++), 
                                 name: file.name, 
                                 originalImage: img, 
                                 processedImage: img,
-                                rmEnabled: false
+                                rmEnabled: rmOnImport
                             };
                             materials.push(newMat);
                             targetMaterialIndex = materials.length - 1;
@@ -3690,10 +4343,10 @@
             mapCanvas.width = mapCols * cellW;
             mapCanvas.height = mapRows * cellH;
             
-            // 核心修复：在应用新的缩放前，先把物理尺寸和 transform 强行归 1，防止倍数叠加
+            // 先把物理尺寸和内联样式归 1，再由 applyMapZoom 按当前倍率重建
             mapCanvas.style.width = (mapCols * cellW) + 'px';
             mapCanvas.style.height = (mapRows * cellH) + 'px';
-            mapCanvas.style.transform = 'scale(1)'; 
+            mapCanvas.style.transform = 'none';
 
             mapGrid = layers[currentLayerIndex].grid;
             mapCreated = true;
@@ -3716,7 +4369,7 @@
                 name: name,
                 cols: cols,
                 rows: rows,
-                layers: [{ id: 1, name: '图层 1', visible: true, grid: createEmptyGridWithSize(cols, rows) }],
+                layers: [{ id: 1, name: '图层 1', visible: true, type: 'normal', grid: createEmptyGridWithSize(cols, rows) }],
                 currentLayerIndex: 0,
                 layerIdCounter: 2
             };
@@ -3752,9 +4405,10 @@
                 // 否则网格层还是旧倍率画的，线宽不会跟着更新。
                 setMapZoom(val);
             } else {
+                // 未建地图时只记住倍率，等地图创建后由 syncMapCanvasResolution 应用
                 mapZoom = val / 100;
                 mapZoomValue.textContent = `${val}%`;
-                mapCanvas.style.transform = `scale(${mapZoom})`;
+                mapCanvas.style.transform = 'none';
             }
         });
         mapZoomResetBtn.addEventListener('click', () => {
@@ -3834,6 +4488,8 @@
                 mapCanvas.width = mapCols * cellW;
                 mapCanvas.height = mapRows * cellH;
                 mapGrid = layers[currentLayerIndex].grid; 
+                // 尺寸变了，哪些格子贴着地图边界也跟着变，边缘图块必须按新边界重演算
+                rebuildAllAutoTiles();
                 rebuildGridOverlay();
                 updateMapSizeDisplay();
                 drawMapPanel();
@@ -3979,6 +4635,9 @@
                         id: layer.id,
                         name: layer.name,
                         visible: layer.visible,
+                        // 背景图层类型与 PNG 数据一起存，读档/分发包才能还原背景
+                        type: isBackgroundLayer(layer) ? 'background' : 'normal',
+                        bgDataUrl: isBackgroundLayer(layer) ? (layer.bgDataUrl || null) : null,
                         grid: layer.grid.map(row => row.map(cell => {
                             if (!cell) return null;
                             // 普通图块记下它被选中时素材的 RM 状态，读档时才能从同一张图重抠像素
@@ -4009,6 +4668,7 @@
                     coordSpace: 'original',
                     autoTiles: autoTiles.map(at => ({
                         id: at.id,
+                        mode: at.mode === 'standard' ? 'standard' : 'rm',
                         startCol: at.startCol,
                         startRow: at.startRow,
                         materialId: at.materialId,
@@ -4042,8 +4702,10 @@
                     newHtml = newHtml.replace(/id="rmModeToggleWrap"/g, 'id="rmModeToggleWrap" data-rm-toggle-hidden="true"');
                     newHtml = newHtml.replace(/for="fileInput"/g, 'for="fileInput" style="display: none;"');
                     
-                    // 3. 隐藏新建图层
+                    // 3. 隐藏新建图层 / 新建背景图层（整行工具条一起收起，不留空白）
                     newHtml = newHtml.replace(/id="addLayerBtn"/g, 'id="addLayerBtn" style="display: none;"');
+                    newHtml = newHtml.replace(/id="addBackgroundLayerBtn"/g, 'id="addBackgroundLayerBtn" style="display: none;"');
+                    newHtml = newHtml.replace(/class="layer-toolbar"/g, 'class="layer-toolbar" style="display: none;"');
                     
                     // 4. 隐藏铅笔、框选、橡皮（用内联样式安全隐藏，不破坏嵌套）
                     newHtml = newHtml.replace(/id="pencilBtn"/g, 'id="pencilBtn" style="display: none;"');
@@ -4090,7 +4752,7 @@
         }
 
         exportSingleBtn.addEventListener('click', exportSingleImage);
-        exportSeparateBtn.addEventListener('click', exportSeparateLayers);
+        exportSeparateBtn.addEventListener('click', openExportLayersModal);
         exportBundleBtn.addEventListener('click', () => exportBundle(false));
         document.getElementById('saveProjectBtn').addEventListener('click', () => exportBundle(true));
         exportCancelBtn.addEventListener('click', () => {
@@ -4102,6 +4764,127 @@
                 exportMapModal.classList.remove('active');
             }
         });
+
+        // ----- 分层导出：先弹出「请选择需要导出的图层」勾选窗口 -----
+        function openExportLayersModal() {
+            exportLayerList.innerHTML = '';
+            if (!layers.length) {
+                const empty = document.createElement('div');
+                empty.className = 'export-layer-empty';
+                empty.textContent = '当前没有图层';
+                exportLayerList.appendChild(empty);
+            }
+            // 与图层面板一致：上层排在最上面
+            for (let idx = layers.length - 1; idx >= 0; idx--) {
+                const layer = layers[idx];
+                const bgLayer = isBackgroundLayer(layer);
+                const row = document.createElement('label');
+                row.className = 'export-layer-row' + (bgLayer ? ' is-background' : '');
+
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = !bgLayer; // 普通图层默认勾选，背景图层默认不勾
+                cb.dataset.layerIndex = String(idx);
+                row.appendChild(cb);
+
+                const name = document.createElement('span');
+                name.className = 'export-layer-name';
+                name.textContent = layer.name;
+                row.appendChild(name);
+
+                if (!layer.visible) {
+                    const hidden = document.createElement('span');
+                    hidden.className = 'export-layer-hidden';
+                    hidden.textContent = '已隐藏';
+                    row.appendChild(hidden);
+                }
+
+                const tag = document.createElement('span');
+                tag.className = 'export-layer-tag';
+                tag.textContent = bgLayer ? '背景图层' : '普通图层';
+                row.appendChild(tag);
+
+                exportLayerList.appendChild(row);
+            }
+            // 先收起上层「导出地图」菜单，避免两层遮罩叠加、后层弹窗从边缘露出
+            exportMapModal.classList.remove('active');
+            exportLayersModal.classList.add('active');
+        }
+
+        function closeExportLayersModal() {
+            exportLayersModal.classList.remove('active');
+            // 取消 / 点击窗口外：回到导出地图菜单，可改选其它导出方式
+            exportMapModal.classList.add('active');
+        }
+
+        function getCheckedExportLayerIndices() {
+            return Array.from(exportLayerList.querySelectorAll('input[type="checkbox"]:checked'))
+                .map(cb => parseInt(cb.dataset.layerIndex, 10))
+                .filter(i => Number.isInteger(i) && i >= 0 && i < layers.length)
+                .sort((a, b) => a - b);
+        }
+
+        exportLayersCancelBtn.addEventListener('click', closeExportLayersModal);
+        exportLayersModal.addEventListener('click', (e) => {
+            if (e.target === exportLayersModal) closeExportLayersModal();
+        });
+        exportLayersConfirmBtn.addEventListener('click', () => {
+            const indices = getCheckedExportLayerIndices();
+            closeExportLayersModal();
+            if (!indices.length) {
+                statusMessage.textContent = '未勾选任何图层，已取消分层导出';
+                exportMapModal.classList.remove('active');
+                return;
+            }
+            exportSeparateLayers(indices);
+        });
+
+        // ----- 背景图层悬停：自绘禁止符号 + 符号右侧「背景图层」文字 -----
+        function showBgCursorBadge(e) {
+            if (!bgCursorBadge) return;
+            // 窗口整体用了 CSS zoom，fixed 定位会被一起缩放；给徽标一个反向 zoom，
+            // 保证禁止符号始终精确落在真实鼠标位置（文字也就稳定在符号右侧）
+            const pageZoom = parseFloat(getComputedStyle(document.body).zoom) || 1;
+            bgCursorBadge.style.zoom = String(1 / pageZoom);
+            bgCursorBadge.classList.add('visible');
+            const w = bgCursorBadge.offsetWidth || 100;
+            const h = bgCursorBadge.offsetHeight || 26;
+            // 图标中心正好落在鼠标位置（左内边距 3 + 边框 1 + 半径 9 ≈ 13）
+            let left = e.clientX - 13;
+            let top = e.clientY - 13;
+            if (left + w > window.innerWidth - 6) left = window.innerWidth - w - 6;
+            if (top + h > window.innerHeight - 6) top = window.innerHeight - h - 6;
+            bgCursorBadge.style.left = Math.max(0, left) + 'px';
+            bgCursorBadge.style.top = Math.max(0, top) + 'px';
+        }
+        function hideBgCursorBadge() {
+            if (bgCursorBadge) bgCursorBadge.classList.remove('visible');
+        }
+        function isBgHoverBlocked() {
+            return Boolean(mapCreated && isBackgroundLayer(layers[currentLayerIndex]) && currentMode !== 'picker');
+        }
+
+        // 统一同步画布光标：背景层 + 非查询模式 -> 隐藏系统十字星，只留自绘禁止徽标
+        function syncMapBlockedCursor() {
+            const blocked = isBgHoverBlocked();
+            mapCanvas.classList.toggle('bg-no-paint', blocked);
+            if (!blocked) hideBgCursorBadge();
+        }
+
+        // 图层面板的条目不再绑定徽标：条目本身要能正常点击切换 / 显隐 / 导入 / 删除
+        function handleMapCanvasHover(e) {
+            syncMapBlockedCursor();
+            if (isBgHoverBlocked()) showBgCursorBadge(e);
+        }
+        mapCanvas.addEventListener('mouseover', handleMapCanvasHover);
+        mapCanvas.addEventListener('mousemove', handleMapCanvasHover);
+        mapCanvas.addEventListener('mouseleave', () => {
+            mapCanvas.classList.remove('bg-no-paint');
+            hideBgCursorBadge();
+        });
+        document.addEventListener('mousedown', hideBgCursorBadge);
+        window.addEventListener('blur', hideBgCursorBadge);
+        syncMapBlockedCursor();
 
         clearMaterialCancelBtn.addEventListener('click', () => {
             clearMaterialModal.classList.remove('active');
@@ -4141,8 +4924,9 @@
         // 检测目标区域是否与已存在的自动元件重叠：逐格判断，
         // 与预览框标红共用同一套口径，保证"看到红格"和"点下去报错"永远一致
         function isAreaOccupied(startC, startR) {
-            for (let dr = 0; dr < AUTO_TILE_ROWS; dr++) {
-                for (let dc = 0; dc < AUTO_TILE_COLS; dc++) {
+            const { cols, rows } = getCreationSize();
+            for (let dr = 0; dr < rows; dr++) {
+                for (let dc = 0; dc < cols; dc++) {
                     if (findAutoTileAtCell(startC + dc, startR + dr)) return true;
                 }
             }
@@ -4157,8 +4941,9 @@
             return autoTiles.find(at => {
                 if (at.materialId !== mat.id) return false;
                 const v = toViewCell(at.startCol, at.startRow, mat);
-                return col >= v.col && col < v.col + AUTO_TILE_COLS &&
-                       row >= v.row && row < v.row + AUTO_TILE_ROWS;
+                const size = getAutoTileSize(at);
+                return col >= v.col && col < v.col + size.cols &&
+                       row >= v.row && row < v.row + size.rows;
             }) || null;
         }
 
@@ -4193,11 +4978,7 @@
             if (mapCreated) drawMapPanel();
         }
 
-        // 自动元件的固定尺寸：2 格宽、3 格高
-        const AUTO_TILE_COLS = 2;
-        const AUTO_TILE_ROWS = 3;
-
-        // 创建自动元件时的 2×3 预览框：整块只有一个外框，不画内部分割线、不铺底色。
+        // 创建自动元件时的预览框：尺寸按当前创建模式（RM 2×3 / 通用 5×10）。
         // 与已创建的自动元件重叠时，重叠格子铺半透明红底，外框落在这些格子边上的那几段描红，
         // 于是红色会顺着重叠范围"伸"进框里，一眼看出是哪一块放不下。
         function drawAutoTilePreviewBox(startCol, startRow) {
@@ -4205,8 +4986,9 @@
             const cellHz = cellH * tileZoom;
             const x0 = startCol * cellWz;
             const y0 = startRow * cellHz;
-            const totalW = cellWz * AUTO_TILE_COLS;
-            const totalH = cellHz * AUTO_TILE_ROWS;
+            const { cols, rows } = getCreationSize();
+            const totalW = cellWz * cols;
+            const totalH = cellHz * rows;
 
             // 判定某格是否已被自动元件占用（与 isAreaOccupied 同一套口径）
             const isOccupied = (dc, dr) => Boolean(findAutoTileAtCell(startCol + dc, startRow + dr));
@@ -4214,8 +4996,8 @@
             tileCtx.save();
 
             // 1. 底色：只给重叠格子铺红，空格子保持素材原样
-            for (let dr = 0; dr < AUTO_TILE_ROWS; dr++) {
-                for (let dc = 0; dc < AUTO_TILE_COLS; dc++) {
+            for (let dr = 0; dr < rows; dr++) {
+                for (let dc = 0; dc < cols; dc++) {
                     if (!isOccupied(dc, dr)) continue;
                     tileCtx.fillStyle = 'rgba(255, 71, 87, 0.28)';
                     tileCtx.fillRect(x0 + dc * cellWz, y0 + dr * cellHz, cellWz, cellHz);
@@ -4235,17 +5017,17 @@
                 tileCtx.stroke();
             };
 
-            for (let dc = 0; dc < AUTO_TILE_COLS; dc++) {
+            for (let dc = 0; dc < cols; dc++) {
                 const left = x0 + dc * cellWz;
-                // 上边、下边各按列宽切成 AUTO_TILE_COLS 段
+                // 上边、下边各按列宽切成一段
                 strokeSpan(left, y0, left + cellWz, y0, isOccupied(dc, 0));
-                strokeSpan(left, y0 + totalH, left + cellWz, y0 + totalH, isOccupied(dc, AUTO_TILE_ROWS - 1));
+                strokeSpan(left, y0 + totalH, left + cellWz, y0 + totalH, isOccupied(dc, rows - 1));
             }
-            for (let dr = 0; dr < AUTO_TILE_ROWS; dr++) {
+            for (let dr = 0; dr < rows; dr++) {
                 const top = y0 + dr * cellHz;
-                // 左边、右边各按行高切成 AUTO_TILE_ROWS 段
+                // 左边、右边各按行高切成一段
                 strokeSpan(x0, top, x0, top + cellHz, isOccupied(0, dr));
-                strokeSpan(x0 + totalW, top, x0 + totalW, top + cellHz, isOccupied(AUTO_TILE_COLS - 1, dr));
+                strokeSpan(x0 + totalW, top, x0 + totalW, top + cellHz, isOccupied(cols - 1, dr));
             }
 
             tileCtx.restore();
@@ -4253,49 +5035,145 @@
 
         const AUTO_TILE_TOOL_IDS = ['pencilBtn', 'fillRectBtn', 'eraserBtn', 'pickerBtn'];
 
-        // 退出创建模式：按钮、工具按钮、状态栏一起复位，切页和取消 RM 时复用同一套动作
+        // 退出创建模式：按钮、工具按钮、状态栏一起复位
         function exitAutoTileCreation() {
             isCreatingAutoTile = false;
+            currentAutoTileMode = 'rm';
+            currentAutoTileId = null;
             hoverAutoTileCell = null;
+            closeAutoTileDropdown();
+            
             const btn = document.getElementById('createAutoTileBtn');
-            btn.style.background = 'rgba(255,255,255,0.1)';
-            btn.style.color = '#34d399';
-            btn.style.borderColor = '#34d399';
+            if (btn) {
+                btn.classList.remove('active-mode');
+                btn.style.background = 'rgba(255,255,255,0.1)';
+                btn.style.color = '#34d399';
+                btn.style.borderColor = '#34d399';
+            }
+            
+            const textEl = document.getElementById('createAutoTileText');
+            const arrowEl = document.getElementById('createAutoTileArrow');
+            if (textEl && arrowEl) {
+                textEl.textContent = '创建自动元件';
+                arrowEl.style.display = 'inline';
+            }
+
+            // 强制切回画笔工具，清空绘制状态
+            currentTool = 'brush';
+            currentMode = 'none';
+            isPainting = false;
+
+            // 恢复进入模式前所有按钮的原始可用状态
+            unlockUi();
             AUTO_TILE_TOOL_IDS.forEach(id => {
                 const b = document.getElementById(id);
                 if (b) b.disabled = false;
             });
-            document.getElementById('pencilBtn').classList.add('primary');
-            document.getElementById('currentToolDisplay').textContent = '铅笔';
+            
+            const pencilBtn = document.getElementById('pencilBtn');
+            if (pencilBtn) pencilBtn.classList.add('primary');
+            
+            const toolDisplay = document.getElementById('currentToolDisplay');
+            if (toolDisplay) toolDisplay.textContent = '铅笔';
+            
             statusMessage.textContent = '已退出自动元件创建模式';
             drawTilePanel();
         }
 
-        document.getElementById('createAutoTileBtn').addEventListener('click', () => {
-            if (isCreatingAutoTile) {
-                exitAutoTileCreation();
-                return;
-            }
-            // RM / 非 RM 都能创建：坐标统一落回原图空间，切换 RM 时自动换算位置
+        function enterAutoTileCreation(mode) {
+            // 自选模式规则未写，点击不进入创建模式
+            if (mode !== 'rm' && mode !== 'standard') return;
+            // 与图块查询互斥：若查询模式仍激活，先干净退出并解除全局锁定
+            if (currentMode === 'picker') togglePickerMode(false);
             isCreatingAutoTile = true;
+            currentAutoTileMode = mode;
+            isPainting = false;
+            closeAutoTileDropdown();
+            
             const btn = document.getElementById('createAutoTileBtn');
-            btn.style.background = '#10b981';
-            btn.style.color = 'white';
-            btn.style.borderColor = '#34d399';
+            if (btn) {
+                btn.classList.add('active-mode');
+                // 强制内联样式，确保点亮效果（按钮自带内联样式会盖过 class）
+                btn.style.background = '#10b981';
+                btn.style.color = '#ffffff';
+                btn.style.borderColor = '#34d399';
+            }
+            
+            const textEl = document.getElementById('createAutoTileText');
+            const arrowEl = document.getElementById('createAutoTileArrow');
+            if (textEl && arrowEl) {
+                textEl.textContent = AUTO_TILE_MODE_LABELS[mode] || '创建自动元件';
+                arrowEl.style.display = 'none';
+            }
 
-            // 核心修复：禁用所有地图画笔工具
+            const size = getCreationSize();
+            statusMessage.textContent = (mode === 'standard' ? '通用模式' : 'RM模式')
+                + `：请在素材上点击选定 ${size.cols}×${size.rows} 区域的左上角，再次点击上方按钮可取消`;
+            
+            // 屏蔽除「创建自动元件」开关外的所有按钮，保持模式独立
+            lockUiForMode('createAutoTileBtn');
             AUTO_TILE_TOOL_IDS.forEach(id => {
                 const b = document.getElementById(id);
-                if (b) {
-                    b.disabled = true;
-                    b.classList.remove('primary');
-                }
+                if (b) b.classList.remove('primary');
             });
-
-            statusMessage.textContent = '请将鼠标移动到左侧素材上，点击框选2×3的区域创建自动元件';
+            
             clearSelectedTile();
-            drawTilePanel(); // 重绘以清除可能残留的选框
+            drawTilePanel();
+        }
+
+        // ----- 创建自动元件：下拉菜单 + 模式切换（WU-24，全程序唯一一处绑定） -----
+        const AUTO_TILE_MODE_LABELS = { rm: 'RM模式', standard: '通用模式', custom: '自选模式' };
+        const autoTileDropdownEl = document.getElementById('autoTileDropdown');
+        const createAutoTileBtnEl = document.getElementById('createAutoTileBtn');
+        const autoTileDropdownWrapper = createAutoTileBtnEl ? createAutoTileBtnEl.closest('.dropdown-wrapper') : null;
+
+        function closeAutoTileDropdown() {
+            if (autoTileDropdownEl) autoTileDropdownEl.classList.remove('active');
+        }
+
+        function isAutoTileDropdownOpen() {
+            return Boolean(autoTileDropdownEl && autoTileDropdownEl.classList.contains('active'));
+        }
+
+        // 1) 点击按钮：展开 / 收起下拉；已在创建模式时则退出创建模式。
+        //    这里 stopPropagation，避免同一次点击又被下面的全局处理器关掉。
+        if (createAutoTileBtnEl) {
+            createAutoTileBtnEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+
+                if (isCreatingAutoTile) {
+                    exitAutoTileCreation();
+                    return;
+                }
+
+                if (autoTileDropdownEl) autoTileDropdownEl.classList.toggle('active');
+            });
+        }
+
+        // 2) 只有点击「按钮 / 下拉窗口」以外的区域才收起菜单。
+        //    不绑定 mouseenter / mouseleave，鼠标从按钮移到悬浮菜单上不会消失。
+        document.addEventListener('click', (e) => {
+            if (!isAutoTileDropdownOpen()) return;
+            if (autoTileDropdownWrapper && autoTileDropdownWrapper.contains(e.target)) return;
+            closeAutoTileDropdown();
         });
+
+        // 3) 点击菜单项：RM / 通用模式进入创建流程并点亮按钮；
+        //    自选模式尚未实现，点击后不做任何改变（菜单也保持展开）。
+        if (autoTileDropdownEl) {
+            autoTileDropdownEl.addEventListener('click', (e) => {
+                const item = e.target.closest('.dropdown-item');
+                if (!item) return;
+                e.stopPropagation();
+
+                const mode = item.dataset.mode;
+                if (mode === 'rm' || mode === 'standard') {
+                    closeAutoTileDropdown();
+                    enterAutoTileCreation(mode);
+                }
+                // 自选模式规则未写，点击不做任何改变
+            });
+        }
 
         // 素材面板右键：命中自动元件时弹出"删除"，让被框选的 2×3 区域可以取消
         tileCanvas.addEventListener('contextmenu', (e) => {
@@ -4317,7 +5195,12 @@
             if (!cell) return;
 
             // 创建模式下不抢选中，交给下面的创建分支判断边界与重叠（该报错照常报错）
-            const hitAutoTile = isCreatingAutoTile ? null : findAutoTileAtCell(cell.col, cell.row);
+            const hitAutoTileRaw = isCreatingAutoTile ? null : findAutoTileAtCell(cell.col, cell.row);
+            // 图块查询模式下，通用模式自动元件覆盖的格子按「普通图块」逐格点击查询：
+            // 跳过「整体选中自动元件」分支，继续往下走普通格子的选中 + 全图反查流程。
+            // RM 模式自动元件不受影响，查询点选时仍是整体选中 + 整块反查。
+            const hitAutoTile = (currentMode === 'picker' && hitAutoTileRaw && hitAutoTileRaw.mode === 'standard')
+                ? null : hitAutoTileRaw;
             if (hitAutoTile) {
                 currentAutoTileId = hitAutoTile.id;
                 clearSelectedTile();
@@ -4334,8 +5217,9 @@
             
             // 核心修复：如果处于自动元件创建模式，拦截原本的选中逻辑
             if (isCreatingAutoTile) {
-                if (cell.col + AUTO_TILE_COLS > getTileCols() || cell.row + AUTO_TILE_ROWS > getTileRows()) {
-                    showAlert('超出素材边界，无法创建 2×3 自动元件。', '创建失败');
+                const size = getCreationSize();
+                if (cell.col + size.cols > getTileCols() || cell.row + size.rows > getTileRows()) {
+                    showAlert(`超出素材边界，无法创建 ${size.cols}×${size.rows} 自动元件。`, '创建失败');
                     return;
                 }
                 
@@ -4346,41 +5230,47 @@
                 }
 
                 const mat = getCurrentMaterial();
-                // 当前画面的 2×3 框换算回原图坐标；跨左右半分界的区域在折半图上会被拆散，直接拦截
+                // 当前画面的框换算回原图坐标；跨左右半分界的区域在折半图上会被拆散，直接拦截
                 const origin = fromViewCell(cell.col, cell.row, mat);
-                if (!mat || !isMappableRegion(origin.col, origin.row, mat)) {
+                if (!mat || !isMappableRegion(origin.col, origin.row, mat, size)) {
                     showAlert('该区域跨原图左右半分界（或跨折半图中线），无法同时在 RM 与非 RM 画面里显示，请改在半边内框选。', '创建失败');
                     return;
                 }
                 
-                // 1. 裁剪 2×3 区域：永远从原图抠，和当前 RM 状态无关，存档读回也不会错位
+                // 1. 裁出整块（RM 2×3 / 通用 5×10）：永远从原图抠，和当前 RM 状态无关
                 const offCanvas = document.createElement('canvas');
-                offCanvas.width = cellW * AUTO_TILE_COLS;
-                offCanvas.height = cellH * AUTO_TILE_ROWS;
+                offCanvas.width = cellW * size.cols;
+                offCanvas.height = cellH * size.rows;
                 const ctx = offCanvas.getContext('2d');
                 ctx.imageSmoothingEnabled = false;
                 ctx.drawImage(mat.originalImage, origin.col * cellW, origin.row * cellH,
-                    cellW * AUTO_TILE_COLS, cellH * AUTO_TILE_ROWS,
-                    0, 0, cellW * AUTO_TILE_COLS, cellH * AUTO_TILE_ROWS);
+                    cellW * size.cols, cellH * size.rows,
+                    0, 0, cellW * size.cols, cellH * size.rows);
 
-                // 2. 提取第一格作为预览图
+                // 2. 缩略图：RM 取左上角第 1 格（1×1）；通用模式取左上角 3×3 拼成的大图，
+                //    两者都画在框选范围正中央
+                const isStandardPreview = currentAutoTileMode === 'standard';
+                const pvCols = isStandardPreview ? STANDARD_PREVIEW_COLS : 1;
+                const pvRows = isStandardPreview ? STANDARD_PREVIEW_ROWS : 1;
                 const previewCanvas = document.createElement('canvas');
-                previewCanvas.width = cellW;
-                previewCanvas.height = cellH;
+                previewCanvas.width = cellW * pvCols;
+                previewCanvas.height = cellH * pvRows;
                 const pCtx = previewCanvas.getContext('2d');
                 pCtx.imageSmoothingEnabled = false;
-                pCtx.drawImage(offCanvas, 0, 0, cellW, cellH, 0, 0, cellW, cellH);
+                pCtx.drawImage(offCanvas, 0, 0, cellW * pvCols, cellH * pvRows,
+                    0, 0, cellW * pvCols, cellH * pvRows);
 
-                // 3. 保存数据：坐标统一是原图空间，RM 与非 RM 共用同一条记录
+                // 3. 保存数据：坐标统一是原图空间；mode 决定尺寸、缩略图与演算规则
                 const newAutoTile = {
                     id: 'auto_' + (autoTileIdCounter++),
+                    mode: currentAutoTileMode,
                     sourceImg: offCanvas,
                     previewImg: previewCanvas.toDataURL(),
-                    // 核心修复：新增直接保存 Canvas 对象用于同步渲染，避免异步加载黑块
+                    // 直接保存 Canvas 对象用于同步渲染，避免异步加载黑块
                     previewCanvas: previewCanvas,
                     startCol: origin.col,
                     startRow: origin.row,
-                    // 核心修复：记录它属于哪一张素材（通过 materialId 隔离）
+                    // 记录它属于哪一张素材（通过 materialId 隔离）
                     materialId: mat.id
                 };
                 autoTiles.push(newAutoTile);
@@ -4388,7 +5278,7 @@
 
                 // 4. 渲染 UI
                 renderAutoTiles();
-                statusMessage.textContent = `成功创建自动元件 (共 ${autoTiles.length} 个)`;
+                statusMessage.textContent = `成功创建${currentAutoTileMode === 'standard' ? '通用模式' : 'RM模式'}自动元件 (共 ${autoTiles.length} 个)`;
                 return;
             }
             
@@ -4458,10 +5348,12 @@
 
         function eventToMapCell(e) {
             const rect = mapCanvas.getBoundingClientRect();
+            // rect 是 CSS 像素（还可能被窗口整体 zoom 缩放），先换算成画布物理像素，
+            // 再除掉地图倍率，回到图块使用的原始逻辑坐标。
             const scaleX = mapCanvas.width / rect.width;
             const scaleY = mapCanvas.height / rect.height;
-            const mouseX = (e.clientX - rect.left) * scaleX;
-            const mouseY = (e.clientY - rect.top) * scaleY;
+            const mouseX = (e.clientX - rect.left) * scaleX / mapZoom;
+            const mouseY = (e.clientY - rect.top) * scaleY / mapZoom;
             const col = Math.floor(mouseX / cellW);
             const row = Math.floor(mouseY / cellH);
             if (col < 0 || col >= mapCols || row < 0 || row >= mapRows) return null;
@@ -4542,8 +5434,175 @@
             }
         }
 
-        // 核心修复：基于 1~24 编号图的纯 1/4 独立象限演算
+        // ===== 通用模式：8 邻格掩码 -> 5×10 图块编号 =====
+        // 位定义与 AUTOTILE_BIT 一致：上1 下2 左4 右8 左上16 右上32 左下64 右下128
+        const SB = { T: 1, B: 2, L: 4, R: 8, TL: 16, TR: 32, BL: 64, BR: 128 };
+        const ALL8 = 255;
+
+        // A. 精确规则：周围 8 格状态完全确定才算命中，优先级最高。
+        //    [规则名, 有连接的邻格掩码, 填充的图块编号]
+        //    只保留「完整 8 格」语义的中心 / 内转角 / T 形；
+        //    孤岛已放宽为「只看上/下/左/右四个正方向」，移到下面的 ISLAND 条件组；
+        //    封边、L 形、边缘这些本轮改成条件式的规则一律移到下面，不再占用精确优先级。
+        const STANDARD_RULE_LIST = [
+            ['中心',             ALL8,                     6],
+            ['左上内转角',       ALL8 & ~SB.TL,            3],
+            ['右上内转角',       ALL8 & ~SB.TR,            4],
+            ['左下内转角',       ALL8 & ~SB.BL,            8],
+            ['右下内转角',       ALL8 & ~SB.BR,            9],
+            ['边缘T形上',        ALL8 & ~(SB.TL | SB.TR), 32],
+            ['边缘T形下',        ALL8 & ~(SB.BL | SB.BR), 26],
+            ['边缘T形左',        ALL8 & ~(SB.TL | SB.BL), 21],
+            ['边缘T形右',        ALL8 & ~(SB.TR | SB.BR), 15],
+            // 素材新增两行后补齐的 7 种邻域：都是「正四向全有、对角呈孤立或对角分布」，
+            // 原先没有规则命中而留空，现在分别取第 9/10 行编号 40~46（47/48/49 是空格，不用）。
+            ['补齐-四角全空',              15,  44],
+            ['补齐-仅左上',                31,  40],
+            ['补齐-仅右上',                47,  41],
+            ['补齐-仅左下',                79,  45],
+            ['补齐-右上左下',             111,  42],
+            ['补齐-仅右下',               143,  46],
+            ['补齐-左上右下',             159,  43]
+        ];
+
+        // B. 条件规则：只约束描述里提到的方向，没提到的方向一律不作要求。
+        //    [规则名, 必须有图块的位, 必须没有图块的位, 填充的图块编号]
+        //    五组优先级：⓪ 孤岛 > ① 四角 > ② 本轮新增 > ③ 本轮调整 > ④ 上一版保留。
+        //    孤岛必须排在所有条件规则最前：L 形 13/14/18/19 的 need=0，
+        //    若不先判定，正四向全空的邻域会被它们抢走。
+        // ⓪ 孤岛：只要上、下、左、右都没有图块就填 37，四个对角一律不作要求
+        //    （共 16 种邻域：正四向全空 + 四角任意组合）。
+        const STANDARD_CONDITION_GROUP_ISLAND = [
+            ['孤岛', 0, SB.T | SB.B | SB.L | SB.R, 37]
+        ];
+
+        // ① 四角：紧跟孤岛之后（用户选定「四角提到最前」）——早期新增组的宽松条件
+        //    会抢走凸角位置；现在新增 8 条已收紧为与四角互补，保留该优先级不影响结果。
+        //    孤岛与四角条件互斥（四角都要求某个正方向有图块），先后不影响结果。
+        //    每组内部自动按「约束方向数量」从多到少排序（更具体的先命中），
+        //    数量相同则保持书写顺序；这样宽松规则不会吞掉具体规则。
+        //    以后补规则：放进对应组即可，不必手工调整先后位置。
+        const STANDARD_CONDITION_GROUP_CORNER = [
+            ['左上角',   SB.R | SB.BR | SB.B, SB.L | SB.T,  0],   // 左、上无；右、右下、下有
+            ['左下角',   SB.R | SB.TR | SB.T, SB.L | SB.B, 10],   // 左、下无；右、右上、上有
+            ['右上角',   SB.L | SB.BL | SB.B, SB.T | SB.R,  2],   // 上、右无；左、左下、下有
+            ['右下角',   SB.L | SB.TL | SB.T, SB.B | SB.R, 12]    // 下、右无；左、左上、上有
+        ];
+
+        // ② 本轮新增：素材重新排布后收紧为「2 个方向没有 + 4 个方向都有」，
+        //    8 条构成一个完整对称族（左右镜像 / 上下镜像 / 180° 旋转），
+        //    每条固定 6 位约束、留 2 位自由，与四角及边缘变体规则互补不重叠。
+        const STANDARD_CONDITION_GROUP_NEW = [
+            ['新增-上下角23', SB.L | SB.B | SB.BR | SB.R, SB.T | SB.BL, 23], // 上、左下无；左、下、右下、右有
+            ['新增-上下角24', SB.R | SB.B | SB.BL | SB.L, SB.T | SB.BR, 24], // 上、右下无；右、下、左下、左有
+            ['新增-上下角28', SB.L | SB.T | SB.TR | SB.R, SB.B | SB.TL, 28], // 下、左上无；左、上、右上、右有
+            ['新增-上下角29', SB.R | SB.T | SB.TL | SB.L, SB.B | SB.TR, 29], // 下、右上无；右、上、左上、左有
+            ['新增-左右角33', SB.T | SB.R | SB.BR | SB.B, SB.L | SB.TR, 33], // 左、右上无；上、右、右下、下有
+            ['新增-左右角38', SB.B | SB.R | SB.TR | SB.T, SB.L | SB.BR, 38], // 左、右下无；下、右、右上、上有
+            ['新增-左右角34', SB.T | SB.L | SB.BL | SB.B, SB.R | SB.TL, 34], // 右、左上无；上、左、左下、下有
+            ['新增-左右角39', SB.B | SB.L | SB.TL | SB.T, SB.R | SB.BL, 39], // 右、左下无；下、左、左上、上有
+            ['上边缘变体', SB.L | SB.R | SB.B, SB.T | SB.BL | SB.BR, 36], // 上无、左右下有、左下右下无
+            ['下边缘变体', SB.L | SB.R | SB.T, SB.B | SB.TL | SB.TR, 35], // 下无、左右上有、左上右上无
+            ['左边缘变体', SB.T | SB.B | SB.R, SB.L | SB.TR | SB.BR, 25], // 左无、上下右有、右上右下无
+            ['右边缘变体', SB.T | SB.B | SB.L, SB.R | SB.TL | SB.BL, 30]  // 右无、上下左有、左上左下无
+        ];
+
+        // ③ 本轮调整：封边 / L 形从精确规则改成条件式；
+        //    原第 9~12 条与四角重复，按确认整组删除，13/14/18/19 只保留下面这 4 行。
+        //    四角 0/2/10/12 已上移到 CORNER 组，优先级最高。
+        const STANDARD_CONDITION_GROUP_ADJUST = [
+            ['单横格左封边',   SB.R,      SB.T | SB.B | SB.L,  20],   // 上下左无、右有
+            ['单横格右封边',   SB.L,      SB.T | SB.B | SB.R,  17],   // 上下右无、左有
+            ['单格横上封边',   SB.B,      SB.L | SB.R | SB.T,  22],   // 左右上无、下有
+            ['单格横下封边',   SB.T,      SB.L | SB.R | SB.B,  31],   // 左右下无、上有
+            ['单竖上接左单横(13)', 0,     SB.R | SB.B | SB.TL, 13],   // 右、下、左上没有
+            ['单竖下接右单横(14)', 0,     SB.L | SB.B | SB.TR, 14],   // 左、下、右上没有
+            ['单竖上接左单横(18)', 0,     SB.R | SB.T | SB.BL, 18],   // 右、上、左下没有
+            ['单竖下接右单横(19)', 0,     SB.L | SB.T | SB.BR, 19]    // 左、上、右下没有
+        ];
+
+        // ④ 上一版保留的四边缘 / 单横 / 单竖
+        const STANDARD_CONDITION_GROUP_OLD = [
+            ['上边缘', SB.L | SB.R | SB.B, SB.T,          1],
+            ['下边缘', SB.L | SB.R | SB.T, SB.B,         11],
+            ['左边缘', SB.T | SB.B | SB.R, SB.L,          5],
+            ['右边缘', SB.T | SB.B | SB.L, SB.R,          7],
+            ['单横格', SB.L | SB.R,        SB.T | SB.B,  16],
+            ['单竖格', SB.T | SB.B,        SB.L | SB.R,  27]
+        ];
+
+        const countBits8 = (n) => { let c = 0; while (n) { c += n & 1; n >>= 1; } return c; };
+        const sortBySpecificity = (group) => group
+            .map((rule, order) => ({ rule, order, weight: countBits8(rule[1]) + countBits8(rule[2]) }))
+            .sort((a, b) => (b.weight - a.weight) || (a.order - b.order))
+            .map(x => x.rule);
+        const STANDARD_CONDITION_RULES = [
+            ...sortBySpecificity(STANDARD_CONDITION_GROUP_ISLAND),
+            ...sortBySpecificity(STANDARD_CONDITION_GROUP_CORNER),
+            ...sortBySpecificity(STANDARD_CONDITION_GROUP_NEW),
+            ...sortBySpecificity(STANDARD_CONDITION_GROUP_ADJUST),
+            ...sortBySpecificity(STANDARD_CONDITION_GROUP_OLD)
+        ];
+
+        // 生成 256 项查表：精确规则 > 条件规则（孤岛 > 四角 > 新增 > 调整 > 旧）> -1 留空
+        // 补齐 7 条后 256 项全部有编号，兜底仅作为安全网保留
+        const STANDARD_MASK_TO_INDEX = (() => {
+            const table = new Array(256);
+            STANDARD_RULE_LIST.forEach(rule => {
+                if (table[rule[1]] === undefined) table[rule[1]] = rule[2];
+            });
+            for (let mask = 0; mask < 256; mask++) {
+                if (table[mask] !== undefined) continue;
+                for (const rule of STANDARD_CONDITION_RULES) {
+                    if ((mask & rule[1]) === rule[1] && (mask & rule[2]) === 0) {
+                        table[mask] = rule[3];
+                        break;
+                    }
+                }
+            }
+            for (let i = 0; i < 256; i++) {
+                if (table[i] === undefined) table[i] = STANDARD_FALLBACK_INDEX;
+            }
+            return table;
+        })();
+
+        // 通用模式不再做象限拼接：直接把 5×10 里对应编号的整格图块交给现有演算链路
+        function generateStandardVariants(autoTile) {
+            if (autoTileRenderCache[autoTile.id]) return;
+            const cache = {};
+            const pieces = {};
+            const getPiece = (index) => {
+                if (pieces[index]) return pieces[index];
+                const cv = document.createElement('canvas');
+                cv.width = cellW;
+                cv.height = cellH;
+                const ctx = cv.getContext('2d');
+                // index < 0 表示没有任何规则命中：保持画布全透明。
+                // paintTileAt 会先 clearRect 再画这张空图块，视觉上即「留空不描画」，
+                // 同时不遮挡下层图块与背景图层，也不影响该格在邻接判定中的存在性。
+                // index < 0（无规则命中）或 index >= 47（素材空格编号）都保持全透明
+                if (index >= 0 && index < STANDARD_DRAWABLE_COUNT) {
+                    ctx.imageSmoothingEnabled = false;
+                    const col = index % STANDARD_COLS;
+                    const row = Math.floor(index / STANDARD_COLS);
+                    ctx.drawImage(autoTile.sourceImg, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH);
+                }
+                pieces[index] = cv;
+                return cv;
+            };
+            for (let mask = 0; mask < 256; mask++) {
+                cache[mask] = getPiece(STANDARD_MASK_TO_INDEX[mask]);
+            }
+            autoTileRenderCache[autoTile.id] = cache;
+        }
+
         function generateAutoTileVariants(autoTile) {
+            if (autoTile.mode === 'standard') generateStandardVariants(autoTile);
+            else generateRmVariants(autoTile);
+        }
+
+        // 核心修复：基于 1~24 编号图的纯 1/4 独立象限演算（仅 RM 模式使用）
+        function generateRmVariants(autoTile) {
             if (autoTileRenderCache[autoTile.id]) return;
             
             const cache = {};
@@ -4625,31 +5684,79 @@
             topLeft: 16, topRight: 32, bottomLeft: 64, bottomRight: 128
         });
 
+        // 8 邻格是否算「和当前自动元件连成一片」。
+        // 地图边界外默认环绕一圈与当前元件相同的素材：贴边的图块不再画成封边，
+        // 而是当作图案继续向外延伸、被地图边缘截断。
+        // 地图内部仍严格锁死在「当前这个自动元件组」：只有同一 autoId 的自动元件格
+        // 才算连接，普通素材、别的元件组、空白格一律不算。
+        function isSameAutoTileNeighbor(c, r, grid, autoId) {
+            if (c < 0 || r < 0 || c >= mapCols || r >= mapRows) return true;
+            const neighbor = grid?.[r]?.[c];
+            return Boolean(neighbor && neighbor.isAuto && neighbor.autoId === autoId);
+        }
+
         // 按 8 邻格状态算出这一格该用 0~255 里的哪张演算图，并写回 imageData
         function applyAutoTileMask(tile, col, row, grid) {
             const autoTile = autoTiles.find(t => t.id === tile.autoId);
             if (!autoTile) return;
             generateAutoTileVariants(autoTile);
 
-            // 只有同一个自动元件画出来的格子才算"连在一起"
-            const isSame = (c, r) => {
-                const neighborRow = grid[r];
-                if (c < 0 || r < 0 || !neighborRow) return false;
-                const neighbor = neighborRow[c];
-                return Boolean(neighbor && neighbor.isAuto && neighbor.autoId === tile.autoId);
-            };
-
             let mask = 0;
-            if (isSame(col, row - 1)) mask |= AUTOTILE_BIT.top;
-            if (isSame(col, row + 1)) mask |= AUTOTILE_BIT.bottom;
-            if (isSame(col - 1, row)) mask |= AUTOTILE_BIT.left;
-            if (isSame(col + 1, row)) mask |= AUTOTILE_BIT.right;
-            if (isSame(col - 1, row - 1)) mask |= AUTOTILE_BIT.topLeft;
-            if (isSame(col + 1, row - 1)) mask |= AUTOTILE_BIT.topRight;
-            if (isSame(col - 1, row + 1)) mask |= AUTOTILE_BIT.bottomLeft;
-            if (isSame(col + 1, row + 1)) mask |= AUTOTILE_BIT.bottomRight;
+            if (isSameAutoTileNeighbor(col, row - 1, grid, tile.autoId)) mask |= AUTOTILE_BIT.top;
+            if (isSameAutoTileNeighbor(col, row + 1, grid, tile.autoId)) mask |= AUTOTILE_BIT.bottom;
+            if (isSameAutoTileNeighbor(col - 1, row, grid, tile.autoId)) mask |= AUTOTILE_BIT.left;
+            if (isSameAutoTileNeighbor(col + 1, row, grid, tile.autoId)) mask |= AUTOTILE_BIT.right;
+            if (isSameAutoTileNeighbor(col - 1, row - 1, grid, tile.autoId)) mask |= AUTOTILE_BIT.topLeft;
+            if (isSameAutoTileNeighbor(col + 1, row - 1, grid, tile.autoId)) mask |= AUTOTILE_BIT.topRight;
+            if (isSameAutoTileNeighbor(col - 1, row + 1, grid, tile.autoId)) mask |= AUTOTILE_BIT.bottomLeft;
+            if (isSameAutoTileNeighbor(col + 1, row + 1, grid, tile.autoId)) mask |= AUTOTILE_BIT.bottomRight;
 
             tile.imageData = autoTileRenderCache[tile.autoId][mask];
+        }
+
+        // 通用模式自动元件格 (col,row) 当前渲染用的是 0~46 里的哪一格素材编号。
+        // 用当前邻域实时算 mask 再查表，保证与绘制结果完全一致（含地图边缘外环绕规则）。
+        // 返回 -1 表示该格是透明留空格，不参与逐格查询。
+        function getStandardVariantIndex(col, row, grid, autoId) {
+            const at = autoTiles.find(t => t.id === autoId);
+            if (!at || at.mode !== 'standard') return -1;
+            let mask = 0;
+            if (isSameAutoTileNeighbor(col, row - 1, grid, autoId)) mask |= AUTOTILE_BIT.top;
+            if (isSameAutoTileNeighbor(col, row + 1, grid, autoId)) mask |= AUTOTILE_BIT.bottom;
+            if (isSameAutoTileNeighbor(col - 1, row, grid, autoId)) mask |= AUTOTILE_BIT.left;
+            if (isSameAutoTileNeighbor(col + 1, row, grid, autoId)) mask |= AUTOTILE_BIT.right;
+            if (isSameAutoTileNeighbor(col - 1, row - 1, grid, autoId)) mask |= AUTOTILE_BIT.topLeft;
+            if (isSameAutoTileNeighbor(col + 1, row - 1, grid, autoId)) mask |= AUTOTILE_BIT.topRight;
+            if (isSameAutoTileNeighbor(col - 1, row + 1, grid, autoId)) mask |= AUTOTILE_BIT.bottomLeft;
+            if (isSameAutoTileNeighbor(col + 1, row + 1, grid, autoId)) mask |= AUTOTILE_BIT.bottomRight;
+            return STANDARD_MASK_TO_INDEX[mask];
+        }
+
+        // 通用模式：把地图格当前用的素材编号换算成它在素材面板上的画面坐标 (画面 col,row)。
+        // idx 是 5×10 区域里的序号，先还原成原图坐标，再按当前素材 RM 状态折算到画面。
+        function standardVariantToViewCell(at, idx, mat) {
+            const origCol = at.startCol + (idx % STANDARD_COLS);
+            const origRow = at.startRow + Math.floor(idx / STANDARD_COLS);
+            return toViewCell(origCol, origRow, mat);
+        }
+
+        // 点选的素材格 (col,row) 若落在某个通用模式自动元件的 5×10 覆盖区内，
+        // 算出它对应的是该元件的哪个编号 idx。地图里凡是当前正用这一格素材的
+        // 通用元件格，都要像普通图块一样逐格高亮。返回 [{autoId, idx}]。
+        function findStandardVariantTargets(col, row, mat) {
+            const out = [];
+            if (!mat) return out;
+            for (const at of autoTiles) {
+                if (at.mode !== 'standard') continue;
+                if (at.materialId && at.materialId !== mat.id) continue;
+                const v = toViewCell(at.startCol, at.startRow, mat);
+                if (col >= v.col && col < v.col + STANDARD_COLS &&
+                    row >= v.row && row < v.row + STANDARD_ROWS) {
+                    const idx = (row - v.row) * STANDARD_COLS + (col - v.col);
+                    if (idx >= 0 && idx < STANDARD_COLS * STANDARD_ROWS) out.push({ autoId: at.id, idx });
+                }
+            }
+            return out;
         }
 
         // 全图重演算：读档后每个自动元件格子都只有标记、没有画面，必须整体刷一遍
@@ -4698,7 +5805,13 @@
         mapCanvas.addEventListener('mousedown', (e) => {
             // 核心修复：如果在自动元件创建模式，拦截地图上的任何点击操作
             if (isCreatingAutoTile) {
-                statusMessage.textContent = '正在创建自动元件，请先在左侧素材面板进行框选！';
+                // 如果用户已经选中了素材，说明可能只想画图，这里为了让用户不困惑，提供更明确的提示
+                statusMessage.textContent = '正在创建自动元件，请先在左侧素材面板框选完毕后再画图！';
+                return;
+            }
+            // 背景图层不接收任何图块绘制（图块查询模式只读取、允许继续使用）
+            if (mapCreated && isBackgroundLayer(layers[currentLayerIndex]) && currentMode !== 'picker') {
+                statusMessage.textContent = '当前是背景图层，不能用图块绘制；请点图层上的图片按钮导入 PNG，或切换到普通图层';
                 return;
             }
             if (e.button === 2) {
@@ -4807,6 +5920,8 @@
             if (isCreatingAutoTile) return;
             if (currentMode === 'picker') return;
             if (!mapCreated) return;
+            // 双保险：即使拖动中途切到了背景图层，也绝不落到图块绘制分支
+            if (isPainting && isBackgroundLayer(layers[currentLayerIndex])) return;
             
             // 实时更新鼠标悬停的格子，并重绘面板
             const hoverCell = eventToMapCell(e);
@@ -4871,24 +5986,24 @@
                         for (let r = 0; r < h; r++) {
                             for (let c = 0; c < w; c++) {
                                 let mask = 0;
-                                // 在预览框内部计算，如果到了边界就判断为 false
-                                const isTop = r > 0;
-                                const isBottom = r < h - 1;
-                                const isLeft = c > 0;
-                                const isRight = c < w - 1;
-                                const isTL = r > 0 && c > 0;
-                                const isTR = r > 0 && c < w - 1;
-                                const isBL = r < h - 1 && c > 0;
-                                const isBR = r < h - 1 && c < w - 1;
-                                
-                                if (isTop) mask |= 1;
-                                if (isBottom) mask |= 2;
-                                if (isLeft) mask |= 4;
-                                if (isRight) mask |= 8;
-                                if (isTL) mask |= 16;
-                                if (isTR) mask |= 32;
-                                if (isBL) mask |= 64;
-                                if (isBR) mask |= 128;
+                                // 框选内的格子都会被填充；框选外若已越出地图边界，
+                                // 按「地图外环绕同组素材」算有，让拖拽预览与落地结果一致；
+                                // 仍在地图内的框选外格子则按实际已有的同组元件判断。
+                                const hasNeighbor = (cc, rr) => {
+                                    if (cc >= 0 && cc < w && rr >= 0 && rr < h) return true;
+                                    const absC = c1 + cc, absR = r1 + rr;
+                                    if (absC < 0 || absR < 0 || absC >= mapCols || absR >= mapRows) return true;
+                                    const t = mapGrid[absR]?.[absC];
+                                    return Boolean(t && t.isAuto && t.autoId === autoTile.id);
+                                };
+                                if (hasNeighbor(c, r - 1)) mask |= 1;
+                                if (hasNeighbor(c, r + 1)) mask |= 2;
+                                if (hasNeighbor(c - 1, r)) mask |= 4;
+                                if (hasNeighbor(c + 1, r)) mask |= 8;
+                                if (hasNeighbor(c - 1, r - 1)) mask |= 16;
+                                if (hasNeighbor(c + 1, r - 1)) mask |= 32;
+                                if (hasNeighbor(c - 1, r + 1)) mask |= 64;
+                                if (hasNeighbor(c + 1, r + 1)) mask |= 128;
                                 
                                 const variantCanvas = autoTileRenderCache[autoTile.id][mask];
                                 tCtx.drawImage(variantCanvas, c * cellW, r * cellH, cellW, cellH);
@@ -4934,6 +6049,11 @@
             }
             if (e.button !== 0) return;
             if (currentMode === 'picker') return;
+            if (isBackgroundLayer(layers[currentLayerIndex])) {
+                isPainting = false;
+                fillRectStart = null;
+                return;
+            }
             if (isPainting && currentTool === 'fillRect' && fillRectStart && mapCreated) {
                 const cell = eventToMapCell(e) || fillRectStart;
                 const { c1, c2, r1, r2 } = getRectRange(fillRectStart, cell);
@@ -4961,11 +6081,8 @@
                                         generateAutoTileVariants(aTile);
                                         
                                         let mask = 0;
-                                        const isSame = (cc, rr) => {
-                                            if (cc < 0 || cc >= mapCols || rr < 0 || rr >= mapRows) return false;
-                                            const t = mapGrid[rr]?.[cc];
-                                            return t && t.isAuto && t.autoId === tile.autoId;
-                                        };
+                                        // 与单笔绘制共用同一套邻格判定：地图边界外视为环绕同组素材
+                                        const isSame = (cc, rr) => isSameAutoTileNeighbor(cc, rr, mapGrid, tile.autoId);
                                         if (isSame(c, r - 1)) mask |= 1;
                                         if (isSame(c, r + 1)) mask |= 2;
                                         if (isSame(c - 1, r)) mask |= 4;
@@ -5077,16 +6194,59 @@
         });
 
         document.getElementById('addLayerBtn').addEventListener('click', addLayer);
+        document.getElementById('addBackgroundLayerBtn').addEventListener('click', addBackgroundLayer);
+
+        // ----- 背景 PNG 导入：只允许 PNG，尺寸不同时左上角原尺寸吸附 -----
+        const bgImageInput = document.getElementById('bgImageInput');
+        bgImageInput.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file || !pendingBgLayer) return;
+            if (file.type !== 'image/png' && !/\.png$/i.test(file.name)) {
+                showAlert('请导入 PNG 格式的图片', '格式不符');
+                e.target.value = '';
+                return;
+            }
+            const targetLayer = pendingBgLayer;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const dataUrl = String(ev.target.result || '');
+                const img = new Image();
+                img.onload = () => {
+                    targetLayer.bgDataUrl = dataUrl;
+                    targetLayer.bgImage = img;
+                    targetLayer.bgWidth = img.naturalWidth;
+                    targetLayer.bgHeight = img.naturalHeight;
+                    renderLayerList();
+                    drawMapPanel();
+                    const mapW = mapCols * cellW;
+                    const mapH = mapRows * cellH;
+                    const diff = (img.naturalWidth !== mapW || img.naturalHeight !== mapH)
+                        ? `；图片 ${img.naturalWidth}×${img.naturalHeight}px 与地图 ${mapW}×${mapH}px 不同，已以左上角为原点按原始尺寸吸附，不缩放`
+                        : '';
+                    statusMessage.textContent = `已为「${targetLayer.name}」导入背景 PNG${diff}`;
+                };
+                img.onerror = () => showAlert('PNG 读取失败，请换一张图片重试', '导入失败');
+                img.src = dataUrl;
+            };
+            reader.readAsDataURL(file);
+            e.target.value = '';
+        });
 
         function exportSingleImage() {
             const offscreen = document.createElement('canvas');
-            offscreen.width = mapCanvas.width;
-            offscreen.height = mapCanvas.height;
+            // 导出永远是 1x 原始像素，不跟着显示倍率放大
+            offscreen.width = mapCols * cellW;
+            offscreen.height = mapRows * cellH;
             const offCtx = offscreen.getContext('2d');
 
             for (let li = 0; li < layers.length; li++) {
                 const layer = layers[li];
                 if (!layer.visible) continue;
+                // 背景图层按层序原尺寸贴 PNG，不带网格
+                if (isBackgroundLayer(layer)) {
+                    drawLayerBackground(offCtx, layer);
+                    continue;
+                }
                 const grid = layer.grid;
                 for (let r = 0; r < mapRows; r++) {
                     for (let c = 0; c < mapCols; c++) {
@@ -5106,22 +6266,31 @@
             exportMapModal.classList.remove('active');
         }
 
-        function exportSeparateLayers() {
+        function exportSeparateLayers(indices = null) {
+            // indices 来自「请选择需要导出的图层」勾选窗口；没有勾选数据时退化为原来的全部可见图层
+            const targets = indices && indices.length
+                ? indices
+                : layers.map((l, i) => i).filter(i => layers[i].visible);
             let count = 0;
-            for (let li = 0; li < layers.length; li++) {
+            for (const li of targets) {
                 const layer = layers[li];
-                if (!layer.visible) continue;
+                if (!layer) continue;
 
                 const offscreen = document.createElement('canvas');
-                offscreen.width = mapCanvas.width;
-                offscreen.height = mapCanvas.height;
+                // 分层导出同样固定 1x 原始像素
+                offscreen.width = mapCols * cellW;
+                offscreen.height = mapRows * cellH;
                 const offCtx = offscreen.getContext('2d');
 
-                for (let r = 0; r < mapRows; r++) {
-                    for (let c = 0; c < mapCols; c++) {
-                        const tile = layer.grid[r]?.[c];
-                        if (tile && tile.imageData) {
-                            offCtx.drawImage(tile.imageData, c * cellW, r * cellH, cellW, cellH);
+                if (isBackgroundLayer(layer)) {
+                    drawLayerBackground(offCtx, layer);
+                } else {
+                    for (let r = 0; r < mapRows; r++) {
+                        for (let c = 0; c < mapCols; c++) {
+                            const tile = layer.grid[r]?.[c];
+                            if (tile && tile.imageData) {
+                                offCtx.drawImage(tile.imageData, c * cellW, r * cellH, cellW, cellH);
+                            }
                         }
                     }
                 }
@@ -5136,6 +6305,7 @@
             }
             statusMessage.textContent = `已分别导出 ${count} 个图层`;
             exportMapModal.classList.remove('active');
+            exportLayersModal.classList.remove('active');
         }
 
         function setTool(tool) {
@@ -5362,34 +6532,38 @@
                         ? fromViewCell(at.startCol, at.startRow, mat, true)
                         : { col: at.startCol, row: at.startRow };
                     const img = new Image();
-                    img.src = at.previewImg;
-                    
                     const cv = document.createElement('canvas');
-                    cv.width = cellW;
+                    cv.width = cellW;   // 图片回来前的 1×1 占位
                     cv.height = cellH;
-                    // 确保预览图加载完毕后绘制到 canvas 中
+                    // 通用模式缩略图是 3×3，RM / 老存档是 1×1：按图片自身尺寸还原，
+                    // 画布会自己适配，绘制处再按格数居中显示
                     img.onload = () => {
+                        cv.width = img.naturalWidth || cellW;
+                        cv.height = img.naturalHeight || cellH;
                         const ctx = cv.getContext('2d');
                         ctx.imageSmoothingEnabled = false;
-                        ctx.drawImage(img, 0, 0, cellW, cellH);
+                        ctx.drawImage(img, 0, 0);
                         drawTilePanel();
                     };
+                    img.src = at.previewImg;
 
                     // 永远从原图按原图坐标重抠，和素材当前 RM 状态无关
+                    const size = getAutoTileSize(at);
                     const srcCanvas = document.createElement('canvas');
-                    srcCanvas.width = cellW * AUTO_TILE_COLS;
-                    srcCanvas.height = cellH * AUTO_TILE_ROWS;
+                    srcCanvas.width = cellW * size.cols;
+                    srcCanvas.height = cellH * size.rows;
                     if (mat) {
                         const sctx = srcCanvas.getContext('2d');
                         sctx.imageSmoothingEnabled = false;
                         sctx.drawImage(mat.originalImage,
                             coord.col * cellW, coord.row * cellH,
-                            cellW * AUTO_TILE_COLS, cellH * AUTO_TILE_ROWS,
-                            0, 0, cellW * AUTO_TILE_COLS, cellH * AUTO_TILE_ROWS);
+                            cellW * size.cols, cellH * size.rows,
+                            0, 0, cellW * size.cols, cellH * size.rows);
                     }
 
                     return {
                         ...at,
+                        mode: at.mode === 'standard' ? 'standard' : 'rm',
                         startCol: coord.col,
                         startRow: coord.row,
                         previewCanvas: cv,
@@ -5399,10 +6573,17 @@
             }
 
             maps = data.maps.map(m => {
-                const restoredLayers = m.layers.map(layer => ({
+                const restoredLayers = m.layers.map(layer => {
+                    const restored = {
                     id: layer.id,
                     name: layer.name,
                     visible: layer.visible,
+                    // 老存档没有 type 字段，一律按普通图层处理
+                    type: layer.type === 'background' ? 'background' : 'normal',
+                    bgDataUrl: layer.type === 'background' ? (layer.bgDataUrl || null) : null,
+                    bgImage: null,
+                    bgWidth: 0,
+                    bgHeight: 0,
                     grid: layer.grid.map(row => row.map(cellData => {
                         if (!cellData) return null;
                         
@@ -5442,7 +6623,22 @@
                             rmEnabled: cellRm
                         };
                     }))
-                }));
+                    };
+
+                    // 背景 PNG 是异步加载的，加载完成后挂回图层并整图重绘
+                    if (restored.type === 'background' && restored.bgDataUrl) {
+                        const bgImg = new Image();
+                        bgImg.onload = () => {
+                            restored.bgImage = bgImg;
+                            restored.bgWidth = bgImg.naturalWidth;
+                            restored.bgHeight = bgImg.naturalHeight;
+                            drawMapPanel();
+                        };
+                        bgImg.src = restored.bgDataUrl;
+                    }
+
+                    return restored;
+                });
                 
                 return {
                     id: m.id,
